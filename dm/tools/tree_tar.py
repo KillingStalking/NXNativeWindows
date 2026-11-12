@@ -7,7 +7,7 @@
 #   tar and <folder>.gone       stopped while the pack removed the folder: the tar is complete, the rest goes
 #   <folder>.unpack, <tar>.part unfinished, they go
 # unpack takes a lock on the parent folder that pack releases: regress.py's chain builds share a game's compile cache with the NSP script, and neither may pack it under the other.
-import os, shutil, subprocess, time
+import errno, os, shutil, subprocess, time
 from pathlib import Path
 
 if os.name == 'nt':
@@ -45,7 +45,8 @@ def _lock(folder, say=None):   # without say, it does not wait: False while anot
             os.lseek(fd, 0, os.SEEK_SET)
             try:
                 msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
-            except OSError:
+            except OSError as e:
+                if e.errno not in (errno.EACCES, errno.EDEADLK): raise
                 if not say:
                     os.close(fd); return False
                 say(f'waiting for another build to finish with {folder}')
@@ -54,7 +55,8 @@ def _lock(folder, say=None):   # without say, it does not wait: False while anot
                         os.lseek(fd, 0, os.SEEK_SET)
                         msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
                         break
-                    except OSError:
+                    except OSError as e:
+                        if e.errno not in (errno.EACCES, errno.EDEADLK): raise
                         time.sleep(0.1)
         except OSError:   # a drive without usable file locking: continue without a lock
             try: os.close(fd)
