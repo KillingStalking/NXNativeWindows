@@ -69,7 +69,8 @@ static void launcher_done(void) { [g_root startGame]; }
 // The game view, the pad and the frame-rate counter are made once the launcher has set the switches they read (DM_SHOW_FPS, DM_METAL_HUD); the host's loading began at app launch (main.m)
 - (void)startGame {
     if (self.game) return;
-    front_hud_env();   // before the game view makes its device (an env file's DM_METAL_HUD sets it in main.m already)
+    front_hud_env();   // apply launcher / env-file switches before starting the game
+    dm_mem_guard();     // start the iOS memory watchdog immediately, not only on the first display-link FPS query
     self.game = [[DmGameView alloc] initWithFrame:self.view.bounds];
     [self.view addSubview:self.game];
     g_layer = (CAMetalLayer *)self.game.layer;
