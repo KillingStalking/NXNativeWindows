@@ -80,8 +80,24 @@ def record_index(path):   # → (an open descriptor, {a record's key: its bytes'
     fd = os.open(path, os.O_RDONLY); n = os.fstat(fd).st_size
     if not n: return fd, {}
     with mmap.mmap(fd, n, access=mmap.ACCESS_READ) as m:
-        offs = [x.start() for x in re.finditer(b'BTCDBTCD', m)] + [n]
-        return fd, {m[o + 8:o + 16].hex(): (o, e) for o, e in zip(offs, offs[1:])}
+        # Do not search for the next marker in arbitrary shader bytes: BTCDBTCD
+        # can occur inside code/control data. The record header carries both
+        # payload lengths, so walk the concatenated records by their declared size.
+        records = {}
+        o = 0
+        while o < n:
+            if n - o < 0x38 or m[o:o + 8] != b'BTCDBTCD':
+                raise ValueError(f'{path}: invalid shader record header at {o:#x} (file size {n:#x})')
+            ctl_size, code_size = struct.unpack_from('<2I', m, o + 0x28)
+            e = o + 0x38 + code_size + ctl_size
+            if e > n:
+                raise ValueError(f'{path}: truncated shader record at {o:#x}: code={code_size:#x}, control={ctl_size:#x}, end={e:#x}, file size={n:#x}')
+            key = m[o + 8:o + 16].hex()
+            if key in records:
+                raise ValueError(f'{path}: duplicate shader key {key} at {o:#x} (first at {records[key][0]:#x})')
+            records[key] = (o, e)
+            o = e
+        return fd, records
 
 # os.pread is unavailable on Windows. Serialize seek+read to preserve its
 # position-independent semantics if shader reads ever become concurrent.
