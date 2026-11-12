@@ -18,6 +18,7 @@
 #import <GameController/GameController.h>
 #import <CoreMotion/CoreMotion.h>
 #import <CoreText/CoreText.h>
+#import <QuartzCore/QuartzCore.h>
 #include <pthread.h>
 #include <stdlib.h>
 #include <string.h>
@@ -779,7 +780,7 @@ void dm_pad_layout_set(int layout) { [g_view setPadLayout:layout]; }
 void dm_gamepad_active(void) { dispatch_async(dispatch_get_main_queue(), ^{ for (GCController *c in GCController.controllers) dm_motion_rearm(c); }); }   // On become active: motion_apple.h
 void dm_gamepad_reset(void) {   // On resign active: release everything (a key held while switching away and released in background gets no "release")
     dispatch_async(dispatch_get_main_queue(), ^{ [g_view reset]; });
-    pthread_mutex_lock(&g_mu); g_shake_btn = 0; memset(g_recenter_pad, 0, sizeof g_recenter_pad); g_sticks_since = 0; pthread_mutex_unlock(&g_mu);
+    pthread_mutex_lock(&g_mu); g_touch_btn = g_shake_btn = 0; g_touch_lx = g_touch_ly = g_touch_rx = g_touch_ry = 0; memset(g_recenter_pad, 0, sizeof g_recenter_pad); g_sticks_since = 0; pthread_mutex_unlock(&g_mu);
     dm_phone_motion_set(NULL); publish();
     if (g_merge) dm_pad_set(0, 0, 0, 0, 0);
     else for (int p = 0; p < DM_PLAYERS; p++) if (g_held[p]) dm_pad_set_player(p, 0, 0, 0, 0, 0);

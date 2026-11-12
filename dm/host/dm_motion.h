@@ -13,9 +13,8 @@ typedef struct { float acc[3], gyro[3], angle[3], dir[9]; int home_right; } dm_m
 void dm_phone_motion_set(const dm_motion *m);   // publishes the newest sample; NULL withdraws it (the sensor lies flat again)
 
 // ---- the frame mapping (pure; shared by the iOS front end and tests/t_motion.c) ----
-// A CoreMotion device-frame vector (x along the portrait's right edge, y to the portrait's top, z out of the screen) in the controller frame. home_right = 1: the interface is
-// landscape right (home indicator on the right: the phone's top edge points to the player's left, so the screen's top is the device's +x and the screen's right the device's -y); 0: landscape
-// left (top edge to the right: the screen's top is the device's -x, its right the device's +y). Both are rotations about z, so the same map takes the angular velocity too
+// A CoreMotion vector in the controller frame. home_right = 1: the hardware frame in landscape right; 0: the hardware frame in landscape left; -1: iOS 27 deviceMotionBody already reports in the
+// pad view's frame, so the mapping is identity. In the hardware frame, landscape right (home indicator right) maps the screen's top to device +x and right to -y; landscape left maps top to -x and right to +y.
 //
 // flip = the sign correction found on a device (BotW's tilt maze, landscape right: tilt inverted both ways, yaw right): bit 0 negates x, bit 1 negates y, S = diag(+-1, +-1, 1). "xy" (3),
 // the default, is a half turn about z. It applies to vectors here (acceleration, angular velocity, and so the angle integrated from it) and to the direction in dm_motion_dir (S D S)
@@ -31,7 +30,7 @@ static inline void dm_motion_vec(int home_right, int flip, const double v[3], do
     double x = home_right < 0 ? v[0] : home_right ? -v[1] : v[1], y = home_right < 0 ? v[1] : home_right ? v[0] : -v[0];
     o[0] = flip & DM_FLIP_X ? -x : x; o[1] = flip & DM_FLIP_Y ? -y : y; o[2] = v[2];
 }
-// The inverse map: a controller-frame vector in the device frame
+// The inverse map: a controller-frame vector in the source frame (hardware or pad view)
 static inline void dm_motion_unvec(int home_right, const double c[3], double d[3]) {
     if (home_right < 0) { d[0] = c[0]; d[1] = c[1]; }
     else { d[0] = home_right ? c[1] : -c[1]; d[1] = home_right ? -c[0] : c[0]; }
