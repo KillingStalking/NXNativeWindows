@@ -21,7 +21,7 @@ The offsets of each level and layer within the storage, and the block height and
 
 ## BC textures
 
-Only GPUs with BC compressed textures are supported (`supportsBCTextureCompression` of `MTLDevice`: Apple silicon Macs and the latest iPhones), so BC textures are created and uploaded as BC; there is no decompression path. A device without them is refused at start ([GPUs without BC textures](../../../docs/reference/rendering.md#gpus-without-bc-textures-are-refused-at-start)). A BC texture is never a render target and its raw blocks are not sampled through an uncompressed view (Metal has no such views; Breath of the Wild encodes one 32×32 BC4 texture on the GPU, GitHub issue #4).
+On a device without native BC texture support (`MTLDevice.supportsBCTextureCompression == NO`, including A16 and older iPhone / iPad GPUs), `nvn_bc_soft` switches the format mapping and upload path to software decompression. BC1 / BC2 / BC3 / BC7 are stored as ASTC 4×4 by default; BC4 / BC5 become R8 / RG8; unsigned BC6H becomes RG11B10F and signed BC6H becomes RGBA16F. BC1–BC3 can use the Metal compute transcoder when GPU deswizzling and its pipeline are available; otherwise the integer CPU transcoder is used. BC7 and the remaining formats use the software decoder. Sparse textures and 3D BC1 / BC2 / BC3 / BC7 use uncompressed pixel storage; ASTC is not assumed to be valid for 3D textures. `DM_BC_SOFT=1` forces the no-BC path for testing on a supported GPU, and `DM_BC_ASTC=0` selects uncompressed formats instead of ASTC / packed HDR output. A BC texture is never a render target and its raw blocks are not sampled through an uncompressed view.
 
 ## Tests
 
