@@ -69,15 +69,52 @@ def main():
         if not xlate.parent.is_dir(): raise BuildError(f'the shader translator is missing from the repository: {xlate}')
     up.check_prereqs = check_prereqs
 
-    def build_nx_extract(repo, work, logs, env):
-        import tempfile, shutil
-        nx = work / 'tools/nx_extract/nx_extract'
-        with tempfile.TemporaryDirectory(prefix='nx_extract_') as t:
-            up.run(['dotnet', 'build', repo / 'dm/tools/nx_extract', '-c', 'Release', '-o', t, '-v', 'quiet', '-nologo'], logs / 'nx_extract_build.log', env=env)
-            if not (Path(t) / 'nx_extract.exe').exists(): raise BuildError(f'nx_extract built without an executable (see {logs / "nx_extract_build.log"})')
-            up.rmtree(nx.parent); shutil.copytree(t, nx.parent)
-        return nx   # Windows starts nx_extract.exe for this path
-    if tc.WINDOWS: up.build_nx_extract = build_nx_extract   # on Linux dotnet writes nx_extract, as upstream expects
+    if tc.WINDOWS:
+        # The committed dm/tools/nx_extract_bin/nx_extract is a macOS Mach-O universal binary.
+        # Never try to execute it on Windows: build the same C# sources as a Windows apphost.
+        # Keep the result in the OS temp cache, keyed by the source fingerprint, not in the
+        # repository or a game's work folder. PublishAot is disabled here deliberately:
+        # the Windows .NET SDK is already a prerequisite, while NativeAOT additionally
+        # requires a separately installed MSVC C++ toolchain.
+        import tempfile
+        _nx_windows_cache = {}
+
+        def find_windows_nx_extract(repo, env):
+            source_sha = up.nx_extract_source_sha(repo)
+            cached = _nx_windows_cache.get(source_sha)
+            if cached and cached.is_file():
+                return cached
+
+            out = Path(tempfile.gettempdir()) / 'nxnative-windows' / 'nx_extract' / source_sha
+            exe = out / 'nx_extract.exe'
+            if not exe.is_file():
+                out.mkdir(parents=True, exist_ok=True)
+                log = out / 'build.log'
+                up.run([
+                    'dotnet', 'publish', repo / 'dm/tools/nx_extract/nx_extract.csproj',
+                    '-c', 'Release', '-r', 'win-x64', '--self-contained', 'false',
+                    '-p:PublishAot=false', '-o', out, '-v', 'quiet', '-nologo',
+                ], log, env=env)
+                if not exe.is_file():
+                    raise BuildError(f'nx_extract did not produce nx_extract.exe; see {log}')
+
+            try:
+                result = subprocess.run(
+                    [str(exe), '--source-sha'], capture_output=True, text=True,
+                    env=env, timeout=60, errors='replace',
+                )
+            except (OSError, subprocess.SubprocessError) as e:
+                raise BuildError(f'Windows nx_extract.exe does not start ({e}): {exe}') from e
+            got = result.stdout.strip()
+            if result.returncode or not got:
+                detail = (result.stderr.strip().splitlines() or [f'exit code {result.returncode}'])[0]
+                raise BuildError(f'Windows nx_extract.exe does not run ({detail}): {exe}')
+            if got != source_sha:
+                raise BuildError(f'Windows nx_extract.exe was not built from the current sources (embedded {got} / expected {source_sha}): {exe}')
+            _nx_windows_cache[source_sha] = exe
+            return exe
+
+        up.find_nx_extract = find_windows_nx_extract
 
     # address-region cuts for an sdk build sdk_patches.py does not register (win/sdk_auto_cuts.py), for a game with virtual address memory: written beside the rewrite, read by the
     # shim when patch_nso.py imports sdk_patches, and part of the rewrite's cache key (patch_files)
