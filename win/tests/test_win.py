@@ -8,6 +8,30 @@ sys.path.insert(0, str(WIN)); sys.path.insert(0, str(WIN / 'sdk'))
 import xcrun, build_app, extract_xip
 
 
+class ProcGroup(unittest.TestCase):
+    @unittest.skipUnless(os.name == 'nt', 'Windows process supervision')
+    def test_reads_pipe_and_reaps_child(self):
+        import proc_group
+        with proc_group.Group([sys.executable, '-c', 'print("proc-group-ok")'],
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as g:
+            output = ''.join(g.lines())
+            self.assertEqual(g.finish(), 0)
+        self.assertIn('proc-group-ok', output)
+
+    @unittest.skipUnless(os.name == 'nt', 'Windows Job Object supervision')
+    def test_reaps_descendant_after_leader_exits(self):
+        import proc_group
+        child = ('import subprocess,sys; '
+                 'subprocess.Popen([sys.executable,"-c","import time; time.sleep(30)"]); '
+                 'print("leader-done")')
+        with proc_group.Group([sys.executable, '-c', child], drain=0.15, grace=0.15,
+                              stdout=subprocess.PIPE, stderr=subprocess.STDOUT) as g:
+            output = ''.join(g.lines())
+            self.assertEqual(g.finish(), 0)
+            self.assertTrue(g.stragglers, 'the surviving child should be detected')
+        self.assertIn('leader-done', output)
+
+
 class Xcrun(unittest.TestCase):
     def test_ios_min_becomes_target(self):
         a = xcrun.metal_args('iphoneos', ['-c', '-mios-version-min=18.0', '-fmetal-math-mode=relaxed', 'x.metal', '-o', 'x.air'])
