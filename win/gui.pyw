@@ -211,7 +211,9 @@ class App(tk.Tk):
     def __init__(self):
         super().__init__()
         self.title('NXNative for Windows'); self.configure(bg=BG)
-        self.geometry('840x980'); self.minsize(720, 760)
+        sw, sh = self.winfo_screenwidth(), self.winfo_screenheight()
+        self.geometry(f'{min(960, max(720, sw - 80))}x{min(900, max(600, sh - 90))}')
+        self.minsize(min(680, sw), min(560, sh))
         self.s = load_settings()
         self.files = [f for f in self.s.get('files', []) if Path(f).exists()]
         self.keys = self.s.get('keys', '') if Path(self.s.get('keys', '') or '.').is_file() else ''
@@ -228,7 +230,23 @@ class App(tk.Tk):
 
     # ---- layout ----
     def _build(self):
-        wrap = tk.Frame(self, bg=BG); wrap.pack(fill='both', expand=True, padx=28, pady=(22, 18))
+        # The form scrolls independently; the build log stays docked at the bottom.
+        shell = tk.Frame(self, bg=BG); shell.pack(fill='both', expand=True)
+        shell.grid_rowconfigure(0, weight=1); shell.grid_columnconfigure(0, weight=1)
+        self.main_canvas = tk.Canvas(shell, bg=BG, highlightthickness=0, bd=0)
+        self.main_scroll = ttk.Scrollbar(shell, orient='vertical', command=self.main_canvas.yview, style='Dark.Vertical.TScrollbar')
+        self.main_canvas.configure(yscrollcommand=self.main_scroll.set)
+        self.main_canvas.grid(row=0, column=0, sticky='nsew')
+        self.main_scroll.grid(row=0, column=1, sticky='ns')
+        outer = tk.Frame(self.main_canvas, bg=BG)
+        self.main_window = self.main_canvas.create_window((0, 0), window=outer, anchor='nw')
+        wrap = tk.Frame(outer, bg=BG)
+        wrap.pack(fill='both', expand=True, padx=28, pady=(22, 18))
+        outer.bind('<Configure>', lambda e: self.main_canvas.configure(scrollregion=self.main_canvas.bbox('all')))
+        self.main_canvas.bind('<Configure>', lambda e: self.main_canvas.itemconfigure(self.main_window, width=e.width))
+        self.bind_all('<MouseWheel>', self._wheel, add='+')
+        self.bind_all('<Button-4>', self._wheel, add='+')
+        self.bind_all('<Button-5>', self._wheel, add='+')
 
         hdr = tk.Frame(wrap, bg=BG); hdr.pack(fill='x', pady=(0, 18))
         logo = tk.Canvas(hdr, width=46, height=46, bg=BG, highlightthickness=0); logo.pack(side='left')
@@ -252,7 +270,17 @@ class App(tk.Tk):
         self.drop = tk.Canvas(self.files_box, height=118, bg=CARD, highlightthickness=0, cursor='hand2')
         self.drop.bind('<Configure>', lambda e: self._draw_drop()); self.drop.bind('<Button-1>', lambda e: self._add_files())
         self.drop.bind('<Enter>', lambda e: self._draw_drop(True)); self.drop.bind('<Leave>', lambda e: self._draw_drop(False))
-        self.rows = tk.Frame(self.files_box, bg=CARD)
+        self.rows_view = tk.Frame(self.files_box, bg=CARD, height=156)
+        self.rows_view.pack_propagate(False)
+        self.rows_canvas = tk.Canvas(self.rows_view, bg=CARD, highlightthickness=0, bd=0)
+        self.rows_scroll = ttk.Scrollbar(self.rows_view, orient='vertical', command=self.rows_canvas.yview, style='Dark.Vertical.TScrollbar')
+        self.rows_canvas.configure(yscrollcommand=self.rows_scroll.set)
+        self.rows_canvas.pack(side='left', fill='both', expand=True)
+        self.rows_scroll.pack(side='right', fill='y')
+        self.rows = tk.Frame(self.rows_canvas, bg=CARD)
+        self.rows_window = self.rows_canvas.create_window((0, 0), window=self.rows, anchor='nw')
+        self.rows.bind('<Configure>', lambda e: self.rows_canvas.configure(scrollregion=self.rows_canvas.bbox('all')))
+        self.rows_canvas.bind('<Configure>', lambda e: self.rows_canvas.itemconfigure(self.rows_window, width=e.width))
 
         # 2. prod.keys
         self.c2 = Surface(wrap); self.c2.pack(fill='x', pady=(0, 12))
@@ -302,8 +330,9 @@ class App(tk.Tk):
         Ghost(rb, 'Show in folder', self._open_out, bg='#0f1a15').pack(side='right')
 
         # details (the log)
-        self.det = tk.Frame(wrap, bg=BG)
-        self.log = tk.Text(self.det, height=12, wrap='word', font=(MONO, 9), state='disabled', relief='flat', bg='#0d0d11', fg='#cfccd8',
+        self.det = tk.Frame(self, bg=BG, height=190)
+        self.det.pack_propagate(False)
+        self.log = tk.Text(self.det, height=8, wrap='word', font=(MONO, 9), state='disabled', relief='flat', bg='#0d0d11', fg='#cfccd8',
                            insertbackground=PINK, selectbackground=PINK_LO, padx=12, pady=10, highlightthickness=1, highlightbackground=BORDER, bd=0)
         sb = ttk.Scrollbar(self.det, command=self.log.yview, style='Dark.Vertical.TScrollbar'); self.log.configure(yscrollcommand=sb.set)
         sb.pack(side='right', fill='y'); self.log.pack(fill='both', expand=True)
@@ -339,9 +368,9 @@ class App(tk.Tk):
     def _refresh(self):
         for wdg in self.rows.winfo_children(): wdg.destroy()
         if not self.files:
-            self.rows.pack_forget(); self.drop.pack(fill='x'); self.more.pack_forget()
+            self.rows_view.pack_forget(); self.drop.pack(fill='x'); self.more.pack_forget()
         else:
-            self.drop.pack_forget(); self.rows.pack(fill='x'); self.more.pack(side='right')
+            self.drop.pack_forget(); self.rows_view.pack(fill='x'); self.more.pack(side='right')
             for i, f in enumerate(self.files):
                 p = Path(f); r = Surface(self.rows, pad=10, radius=12, fill=FIELD, outline=BORDER, bg=CARD); r.pack(fill='x', pady=(0, 6))
                 rb = r.body; rb.configure(bg=FIELD)
@@ -428,10 +457,29 @@ class App(tk.Tk):
         if self.proc: return
         self.iml = v; self.s['iml'] = v; save_settings(self.s); self._refresh()
 
+    def _wheel(self, e):
+        if not self.winfo_exists(): return
+        if getattr(e, 'num', None) == 4: step = -3
+        elif getattr(e, 'num', None) == 5: step = 3
+        else: step = -int(e.delta / 120) if e.delta else 0
+        if not step: return
+        w, in_files = e.widget, False
+        while w is not None:
+            if w is self.rows_canvas: in_files = True; break
+            if w is self.log:
+                self.log.yview_scroll(step, 'units'); return 'break'
+            w = getattr(w, 'master', None)
+        (self.rows_canvas if in_files else self.main_canvas).yview_scroll(step, 'units')
+        return 'break'
+
     def _toggle_details(self):
         self.details = not self.details
-        if self.details: self.det.pack(fill='both', expand=True, pady=(12, 0)); self.det_link.configure(text='Hide details')
-        else: self.det.pack_forget(); self.det_link.configure(text='Show details')
+        if self.details:
+            self.det.pack(side='bottom', fill='x', padx=28, pady=(0, 14))
+            self.det_link.configure(text='Hide details')
+        else:
+            self.det.pack_forget()
+            self.det_link.configure(text='Show details')
 
     # ---- toolchain ----
     def _doctor(self):
@@ -538,7 +586,7 @@ class App(tk.Tk):
                 self.res_hint.configure(text="Install the IPA with Sideloadly, then copy the data folder into the app's Documents\n(Apple Devices app > Files, or the Files app). README.txt inside it explains.")
             else:
                 self.res_path.configure(text=self.out_ipa); self.res_hint.configure(text='Sign and install it with Sideloadly.')
-            self.result.pack(fill='x', pady=(14, 0), before=self.det if self.details else None)
+            self.result.pack(fill='x', pady=(14, 0))
             self._write(f'\nIPA ready  →  {self.out_ipa}\n', 'ok')
         else:
             self._refresh()
