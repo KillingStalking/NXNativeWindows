@@ -2036,6 +2036,7 @@ typedef struct {
     MTLSize size;
     __unsafe_unretained id<MTLTexture> dst;   // Strongly referenced by g_up_texs until the flush is encoded
     NSUInteger slice, level;
+    uint8_t fill;
 } up_blit;
 static up_blit *g_up_blits; static int g_nup_blits, g_up_blitcap;
 typedef struct { __unsafe_unretained id<MTLBuffer> src, params; size_t poff; uint32_t nbx, nby; } up_ast;
@@ -2079,6 +2080,9 @@ static void up_flush(void) {
     }
     id<MTL4ComputeCommandEncoder> b = (g_nup_blits || g_nup_asts) ? g_up_ce = [g_up_cb computeCommandEncoder] : nil;
     if (b) [b barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:resource_vis()];
+    int nfill = 0;
+    for (int i = 0; b && i < g_nup_blits; i++) { up_blit *x = &g_up_blits[i]; if (!x->fill) continue; nfill++; enc_b_copy_buffer_texture(b, x->src, x->off, x->row, x->image, x->size, x->dst, x->slice, x->level, MTLOriginMake(0, 0, 0)); }
+    if (b && nfill && g_nup_asts) [b barrierAfterEncoderStages:MTLStageBlit beforeEncoderStages:MTLStageDispatch | MTLStageBlit visibilityOptions:MTL4VisibilityOptionDevice];
     if (b && g_nup_asts) {
         [b setArgumentTable:g_up_ct]; [b setComputePipelineState:bca_pso()];
         for (int i = 0; i < g_nup_asts; i++) { up_ast *x = &g_up_asts[i];
@@ -2090,7 +2094,7 @@ static void up_flush(void) {
         [b barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageBlit visibilityOptions:MTL4VisibilityOptionDevice];
     }
     for (int i = 0; b && i < g_nup_blits; i++) {
-        up_blit *x = &g_up_blits[i];
+        up_blit *x = &g_up_blits[i]; if (x->fill) continue;
         enc_b_copy_buffer_texture(b, x->src, x->off, x->row, x->image, x->size, x->dst, x->slice, x->level, MTLOriginMake(0, 0, 0));
     }
     if (b) { m4_end(b); g_up_ce = nil; }
@@ -2239,7 +2243,12 @@ static void up_blit_add(id<MTLBuffer> src, size_t off, size_t row, size_t image,
         g_up_blitcap = g_up_blitcap ? g_up_blitcap * 2 : 256;
         g_up_blits = realloc(g_up_blits, g_up_blitcap * sizeof *g_up_blits);
     }
-    g_up_blits[g_nup_blits++] = (up_blit){src, off, row, image, size, dst, slice, level};
+    g_up_blits[g_nup_blits++] = (up_blit){src, off, row, image, size, dst, slice, level, 0};
+}
+static void up_blit_add_fill(id<MTLBuffer> src, size_t off, size_t row, size_t image, MTLSize size,
+                             id<MTLTexture> dst, NSUInteger slice, NSUInteger level) {
+    if (g_nup_blits == g_up_blitcap) { g_up_blitcap = g_up_blitcap ? g_up_blitcap * 2 : 256; g_up_blits = realloc(g_up_blits, g_up_blitcap * sizeof *g_up_blits); }
+    g_up_blits[g_nup_blits++] = (up_blit){src, off, row, image, size, dst, slice, level, 1};
 }
 
 static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture> reuse);
@@ -2449,7 +2458,18 @@ static id<MTLBuffer> zero_buf(size_t need) {
     return zb;
 }
 static uint64_t g_tex_zeroed;
-static void tex_zero_fill(id<MTLTexture> mt) {
+static id<MTLBuffer> astc_zero_buf(size_t need) {
+    static id<MTLBuffer> zb; static size_t zn;
+    if (need > zn) {
+        size_t n = MAX(need, (size_t)1 << 20);
+        id<MTLBuffer> b = [g_dev newBufferWithLength:n options:MTLResourceStorageModeShared]; if (!b) return nil;
+        uint8_t blk[16]; nvn_astc_zero_block(blk);
+        for (size_t i = 0; i + 16 <= n; i += 16) memcpy((uint8_t *)b.contents + i, blk, 16);
+        res_add(b); if (zb) defer_obj_release(zb); zb = b; zn = n;
+    }
+    return zb;
+}
+static void tex_zero_fill(id<MTLTexture> mt, int bc_astc_tex) {
     static int warned;
     if (!atomic_load(&g_sub_thread_set) || !on_sub_thread()) return;   // the upload batch belongs to the submit thread only
     MTLTextureType tt = mt.textureType;
@@ -2475,7 +2495,21 @@ static void tex_zero_fill(id<MTLTexture> mt) {
         if (!g_cb) up_flush();
         return;
     }
-    if (tt == MTLTextureType2DMultisample || tt == MTLTextureType2DMultisampleArray || tt == MTLTextureTypeTextureBuffer) return;
+    if (tt == MTLTextureType2DMultisample || tt == MTLTextureType2DMultisampleArray) return;
+    if (tt == MTLTextureTypeTextureBuffer) return;
+    if (bc_astc_tex && (mt.pixelFormat == MTLPixelFormatASTC_4x4_LDR || mt.pixelFormat == MTLPixelFormatASTC_4x4_sRGB)) {
+        size_t need = (((size_t)mt.width + 3) / 4) * (((size_t)mt.height + 3) / 4) * 16;
+        id<MTLBuffer> zb = astc_zero_buf(need); if (!zb) return;
+        up_begin();
+        NSUInteger slices = mt.arrayLength * (tt == MTLTextureTypeCube || tt == MTLTextureTypeCubeArray ? 6 : 1);
+        for (NSUInteger l = 0; l < mt.mipmapLevelCount; l++) {
+            NSUInteger w = MAX(mt.width >> l, 1u), h = MAX(mt.height >> l, 1u), nbx = (w + 3) / 4, nby = (h + 3) / 4;
+            for (NSUInteger y = 0; y < slices; y++) up_blit_add_fill(zb, 0, nbx * 16, nbx * 16 * nby, MTLSizeMake(w, h, 1), mt, y, l);
+        }
+        [g_up_texs addObject:mt];
+        if (!g_cb) up_flush();
+        return;
+    }
     size_t bpp = mtl_pf_bytes(mt.pixelFormat);
     if (!bpp) { if (!warned++) MLOG("new-texture zeroing: pixel format %lu not cleared (compressed / unsupported)", (unsigned long)mt.pixelFormat); return; }
     NSUInteger slices = mt.arrayLength * (tt == MTLTextureTypeCube || tt == MTLTextureTypeCubeArray ? 6 : 1);
@@ -2657,7 +2691,7 @@ static id<MTLTexture> image_texture(const tex_t *t, MTLTextureDescriptor *d) {
         // Initialize the whole family, including storage outside a first-used small resolution. Only a new heap is zeroed; later descriptors alias its existing bytes.
         id<MTLTexture> zero = largest == d ? mt : [owner->heap newTextureWithDescriptor:largest offset:0];
         if (!zero) return nil;
-        objc_setAssociatedObject(zero, &g_image_heap_owner_key, owner, OBJC_ASSOCIATION_RETAIN_NONATOMIC); tex_zero_fill(zero);
+        objc_setAssociatedObject(zero, &g_image_heap_owner_key, owner, OBJC_ASSOCIATION_RETAIN_NONATOMIC); tex_zero_fill(zero, 0);
     }
     return mt;
 }
@@ -2763,7 +2797,7 @@ static id<MTLTexture> tex_mtl_(const tex_t *ct) {
         if (!d) return nil;
         mt = image_texture(t, d);
         if (!mt) { mt = [g_dev newTextureWithDescriptor:d];
-            if (mt) { res_add(mt); if (!tex_init_fill(t, mt)) tex_zero_fill(mt); } }
+            if (mt) { res_add(mt); if (!tex_init_fill(t, mt)) { uint32_t apf; int akind; int bc_astc_tex = nvn_bc_soft && t->d.target != 2 && t->d.samples <= 1 && nvn_bc_astc_fmt((uint32_t)t->d.format, &apf, &akind); tex_zero_fill(mt, bc_astc_tex); } } }
         if (!mt) { RED_ONCE(2, "failed to create MTLTexture %ux%u format %#x target %d", t->d.width, t->d.height, t->d.format, t->d.target); return nil; }
     }
     if (g_allocprof > 0) { static int n; if (n++ < 30 || n % 500 == 0) MLOG("new texture (%s) #%d ser=%llu %ux%ux%u format %#x target %d levels %u storage %p", __func__, n, (unsigned long long)t->serial, t->d.width, t->d.height, t->d.depth, t->d.format, t->d.target, t->d.levels, (void *)t->mem); }
