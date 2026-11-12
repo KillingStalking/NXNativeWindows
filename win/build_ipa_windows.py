@@ -90,11 +90,20 @@ def main():
             if not exe.is_file():
                 out.mkdir(parents=True, exist_ok=True)
                 log = out / 'build.log'
+                # MSBuild's node/compiler servers outlive the dotnet CLI by design. This
+                # build runs under proc_group supervision, which correctly treats those
+                # leftovers as stragglers; disable the servers rather than weakening that
+                # process-tree check for every other build step.
+                build_env = dict(env)
+                build_env['DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER'] = '1'
+                build_env['MSBUILDDISABLENODEREUSE'] = '1'
                 up.run([
                     'dotnet', 'publish', repo / 'dm/tools/nx_extract/nx_extract.csproj',
                     '-c', 'Release', '-r', 'win-x64', '--self-contained', 'false',
+                    '--disable-build-servers', '-m:1', '-nodeReuse:false',
+                    '-p:UseSharedCompilation=false', '-p:BuildInParallel=false',
                     '-p:PublishAot=false', '-o', out, '-v', 'quiet', '-nologo',
-                ], log, env=env)
+                ], log, env=build_env)
                 if not exe.is_file():
                     raise BuildError(f'nx_extract did not produce nx_extract.exe; see {log}')
 
