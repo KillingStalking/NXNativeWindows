@@ -74,7 +74,23 @@ static void launcher_done(void) { [g_root startGame]; }
     self.game = [[DmGameView alloc] initWithFrame:self.view.bounds];
     [self.view addSubview:self.game];
     g_layer = (CAMetalLayer *)self.game.layer;
-    if (getenv("DM_METAL_HUD") && atoi(getenv("DM_METAL_HUD"))) { g_layer.developerHUDProperties = @{@"mode": @"default"}; LOG("front end: performance HUD on (DM_METAL_HUD): fps, GPU time, memory and what is left before the limit"); }   // Apple's HUD over the game: frame rate, frame and GPU time, memory
+    const char *hud_env = getenv("DM_METAL_HUD");
+    int hud_mode = hud_env ? atoi(hud_env) : 0;   // 0 off, 1 compact, 2 full Apple Metal Performance HUD
+    if (hud_mode > 0) {
+        if (hud_mode >= 2) {
+            g_layer.developerHUDProperties = @{
+                @"mode": @"default",
+                @"MTL_HUD_ELEMENTS": @"device,rosetta,layersize,layerscale,memory,fps,frameinterval,gputime,thermal,frameintervalgraph,presentdelay,frameintervalhistogram,metalcpu,gputimeline,shaders,framenumber,disk,fpsgraph,toplabeledcommandbuffers,toplabeledencoders",
+                @"MTL_HUD_ENCODER_TIMING_ENABLED": @"1",
+                @"MTL_HUD_SHOW_METRICS_RANGE": @"1",
+                @"MTL_HUD_ALIGNMENT": @"topright"
+            };
+            LOG("front end: full Apple Metal Performance HUD on (all available metrics, frame graphs and encoder timing)");
+        } else {
+            g_layer.developerHUDProperties = @{@"mode": @"default"};
+            LOG("front end: compact performance HUD on");
+        }
+    }
     dm_haptics_apple_init();
     self.pad = dm_gamepad_view(self.view.bounds);
     self.pad.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
@@ -138,7 +154,9 @@ double mtl_gpu_ms(uint64_t f);
                     // first Metal device, which the host makes during its early loading, before the launcher sets the switch: it never appeared from the launcher)
 static UILabel *front_ios_fps_label(void) {
     const char *e = getenv("DM_SHOW_FPS"), *h = getenv("DM_METAL_HUD");
-    g_hud = h && atoi(h) != 0;
+    int mode = h ? atoi(h) : 0;
+    g_hud = mode == 1;   // the custom compact line is only used in Compact mode; Full uses Apple's native overlay
+    if (mode >= 2) return nil;
     if (!g_hud && !(e ? atoi(e) != 0 : [[NSBundle.mainBundle objectForInfoDictionaryKey:@"DMShowFPS"] boolValue])) return nil;
     UILabel *l = [UILabel new];
     l.font = [UIFont monospacedDigitSystemFontOfSize:13 weight:UIFontWeightSemibold]; l.textColor = UIColor.whiteColor; l.textAlignment = NSTextAlignmentCenter;
