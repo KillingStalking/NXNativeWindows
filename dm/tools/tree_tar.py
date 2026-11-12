@@ -41,7 +41,7 @@ def _lock(folder, say=None):   # without say, it does not wait: False while anot
         lock_path = os.path.join(parent, '.tree_tar.lock')
         try:
             fd = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o666)
-            if os.fstat(fd).st_size == 0: os.write(fd, b'\\0')
+            if os.fstat(fd).st_size == 0: os.write(fd, bytes([0]))
             os.lseek(fd, 0, os.SEEK_SET)
             try:
                 msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
