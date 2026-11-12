@@ -101,13 +101,28 @@ def record_index(path):   # → (an open descriptor, {a record's key: its bytes'
 
 # os.pread is unavailable on Windows. Serialize seek+read to preserve its
 # position-independent semantics if shader reads ever become concurrent.
+# Both APIs may return a short read, so keep reading until the requested span
+# is complete; shader records must never be silently truncated.
 _pread_lock = threading.Lock()
 def read_at(fd, size, offset):
+    chunks = []
+    done = 0
     if hasattr(os, 'pread'):
-        return os.pread(fd, size, offset)
-    with _pread_lock:
-        os.lseek(fd, offset, os.SEEK_SET)
-        return os.read(fd, size)
+        while done < size:
+            chunk = os.pread(fd, size - done, offset + done)
+            if not chunk: break
+            chunks.append(chunk); done += len(chunk)
+    else:
+        with _pread_lock:
+            os.lseek(fd, offset, os.SEEK_SET)
+            while done < size:
+                chunk = os.read(fd, size - done)
+                if not chunk: break
+                chunks.append(chunk); done += len(chunk)
+    data = b''.join(chunks)
+    if len(data) != size:
+        raise OSError(f'short shader package read at {offset:#x}: requested {size} bytes, got {len(data)}')
+    return data
 
 def clone(src, dst):   # APFS copy-on-write, else a plain copy; the clonefile call, not a cp: a fork of this large process costs about 6 ms
     os.makedirs(os.path.dirname(dst), exist_ok=True)
