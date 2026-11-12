@@ -5,6 +5,7 @@
 //   BC7: 8 modes of 1 to 3 subsets, optional rotation, 2 / 3 / 4-bit indices
 // Checked against a reference decoder (Pillow's) block by block: win/tests/test_win.py builds this file for the PC and compares random blocks of every format and mode.
 #include "bc_soft.h"
+#include "bc2astc_core.h"   // Integer BC1/2/3 → ASTC reference, shared with the Metal kernel
 #include <string.h>
 #ifdef __APPLE__
 #include <dispatch/dispatch.h>
@@ -311,16 +312,6 @@ static void astc_encode(const uint8_t *px, uint8_t *o) {
     astc_write(o, nc, e, wi, wbits);
 }
 // BC1 four-colour block (c0 > c1): the same palette in ASTC, CEM 8 with 2-bit weights (indices 0 1 2 3 = weights 0 3 1 2)
-static int bc1_astc(const uint8_t *p, uint8_t *o) {
-    uint16_t c0 = (uint16_t)(p[0] | p[1] << 8), c1 = (uint16_t)(p[2] | p[3] << 8);
-    if (c0 <= c1) return 0;
-    int e[2][4]; rgb565(c0, &e[0][0], &e[0][1], &e[0][2]); rgb565(c1, &e[1][0], &e[1][1], &e[1][2]); e[0][3] = e[1][3] = 255;
-    static const uint8_t map[4] = {0, 3, 1, 2}; uint8_t wi[16];
-    uint32_t idx = (uint32_t)(p[4] | p[5] << 8 | p[6] << 16 | (uint32_t)p[7] << 24);
-    for (int i = 0; i < 16; i++) wi[i] = map[idx >> (2 * i) & 3];
-    astc_write(o, 3, e, wi, 2);
-    return 1;
-}
 static uint32_t uf(uint16_t h, int mb) {   // a half float into an unsigned small float with mb mantissa bits (5-bit exponent, bias 15 for both): negatives and NaN to 0, rounded to nearest
     if (h & 0x8000) return 0;
     if ((h & 0x7c00) == 0x7c00) return (h & 0x3ff) ? 0 : 0x1fu << mb;
@@ -330,7 +321,19 @@ static uint32_t uf(uint16_t h, int mb) {   // a half float into an unsigned smal
 static void block_out(uint32_t pf, const uint8_t *p, uint8_t *dst, size_t dst_pitch) {
     uint32_t o = bc_soft_target(pf, NULL);
     if (o == ASTC4 || o == ASTC4_S) {
-        if ((pf == BC1 || pf == BC1_S) && bc1_astc(p, dst)) return;
+        // BC1–BC3 use the integer transcoder shared with the Metal GPU kernel. The
+        // CPU result is the reference and must be byte-identical to the GPU output.
+        int kind = (pf == BC1 || pf == BC1_S) ? 1 :
+                   (pf == BC2 || pf == BC2_S) ? 2 :
+                   (pf == BC3 || pf == BC3_S) ? 3 : 0;
+        if (kind) {
+            uint32_t in[4] = {0, 0, 0, 0}, out[4] = {0, 0, 0, 0};
+            memcpy(in, p, kind == 1 ? 8 : 16);
+            bca_transcode(in, (u32)kind, out);
+            memcpy(dst, out, 16);
+            return;
+        }
+        // BC7 remains on the existing software ASTC encoder path.
         uint8_t px[64]; bc_soft_block(pf, p, px, 16); astc_encode(px, dst); return;
     }
     if (o == RG11B10F) {

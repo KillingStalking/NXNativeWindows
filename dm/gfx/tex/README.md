@@ -46,3 +46,10 @@ make -C dm/gfx/tex/tests run       # run t_fmt_mtl and t_tex
 - `nvn_deswizzle()` does not support multisampled textures, textures with the LINEAR flag (which are linear to begin with) or the BUFFER target; it returns -1 when it encounters them.
 - Cubes and cube arrays are handled as layered textures.
 - The component bit order of the 16-bit packed formats (565 / 5551 / 4444) is mapped according to the format names and has not been checked with real data; they are marked as "substitute" in the format table.
+
+
+## BC1–BC3 → ASTC 4×4 transcoding
+
+On GPUs without BC support, BC1, BC2 and BC3 keep their compressed-size storage by being transcoded to ASTC 4×4 at upload. The CPU fallback uses the integer reference in `bc2astc_core.h` / `bc2astc_body.inc`; the same body is compiled as the Metal kernel in `bc2astc_msl.h`. CPU and GPU output must be byte-identical. BC7 continues to use the existing software ASTC encoder; BC4 / BC5 and signed BC6H retain their software-decoded formats.
+
+The standalone Metal parity test is `dm/gfx/tests/t_bc2astc_gpu.m`. It exercises BC1–BC3 with pitched buffers and checks the GPU output against the C reference, including the transcoder's layout and endpoint-swap cases.
