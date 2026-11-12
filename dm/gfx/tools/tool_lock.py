@@ -45,7 +45,7 @@ def check_tools():
     # PE/.NET artifact, so compare its embedded source digest instead of its binary fingerprint.
     bad = [f'{k}: lock {want.get(k)} / actual {v}' for k, v in now.items()
            if want.get(k) != v and (ran or k != 'xlate_source')
-           and not (os.name == 'nt' and k == 'dmsh_xlate')]
+           and not (os.name == 'nt' and k in ('dmsh_xlate', 'xlate_source'))]
     if not ran: bad.append(no_run_message(now['xlate_source']))
     elif now['xlate_source'] != xlate_source_sha(): bad.append(f'the translator was not built from the in-repo source: embedded source {now["xlate_source"]} / in repo {xlate_source_sha()} (rebuild it: dm/tools/native_tools.sh dmsh_xlate)')
     return bad
