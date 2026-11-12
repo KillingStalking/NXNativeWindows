@@ -24,7 +24,7 @@ static CAMetalLayer *g_layer;
 static void front_ios_power_watch(void);
 static void front_ios_audio_watch(void);
 static UILabel *front_ios_fps_label(void);
-static int g_hud;   // DM_METAL_HUD: the counter grows into a HUD (front_ios_fps_label)
+static int g_hud;   // DM_METAL_HUD=1: show the compact stats line; mode 2 uses Apple's native full HUD
 
 @interface DmGameView : UIView
 @end
@@ -179,7 +179,7 @@ static UILabel *front_ios_fps_label(void) {
         }
         n0 = n; t0 = now;
     }];
-    LOG("front end: frame-rate counter on");
+    LOG(g_hud ? "front end: compact performance stats on" : "front end: frame-rate counter on");
     return l;
 }
 
