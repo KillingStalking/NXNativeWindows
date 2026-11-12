@@ -14,6 +14,19 @@ if (os.name == 'nt' or os.environ.get('NXW_LINUX')) and not os.environ.get('NXW_
     import ctypes, shutil, subprocess
     from pathlib import Path
     _WIN = Path(__file__).resolve().parent.parent
+    # The upstream pipeline creates some child-process env dictionaries before the driver
+    # finishes preparing the Windows translator. Resolve it again in every Python process,
+    # so own_compilers.py and dmsh_chain.py cannot fall back to the committed macOS binary.
+    if os.name == 'nt':
+        import hashlib, tempfile
+        _gfx_tools = _WIN.parent / 'dm/gfx/tools'
+        _xlate_sha = hashlib.sha256(
+            (_gfx_tools / 'dmsh_xlate/Program.cs').read_bytes() +
+            (_gfx_tools / 'dmsh_xlate/dmsh_xlate.csproj').read_bytes()
+        ).hexdigest()[:16]
+        _xlate_exe = Path(tempfile.gettempdir()) / 'nxnative-windows' / 'dmsh_xlate' / _xlate_sha / 'dmsh_xlate.exe'
+        if _xlate_exe.is_file() and _xlate_exe.with_suffix('.dll').is_file():
+            os.environ['XLATE'] = str(_xlate_exe)
     _XCRUN = str(_WIN / 'xcrun.py')
     _BUILD_APP = str(_WIN / 'build_app.py')
 
