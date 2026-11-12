@@ -389,7 +389,7 @@ int bc_soft_decode_for_texture(uint32_t pf, int is_3d, const uint8_t *src, size_
         return 0;
     }
 #endif
-    decode_rows(pf, src, src_pitch, bw, 0, bh, dst, dst_pitch, bpp, bsz, is_3d);
+    decode_rows(pf, src, src_pitch, bw, 0, bh, dst, dst_pitch, bpp, bsz, force_pixels);
     return 0;
 }
 int bc_soft_decode(uint32_t pf, const uint8_t *src, size_t src_pitch, uint32_t w, uint32_t h, uint8_t *dst, size_t dst_pitch) {
