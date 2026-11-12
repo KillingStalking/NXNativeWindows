@@ -62,8 +62,9 @@ static void publish(void) {   // the touch gamepad and the shake; the host ORs t
 // (dm_motion.h) and published with dm_phone_motion_set: acceleration = gravity + user acceleration in G, rotation rate in revolutions / s, the angle
 // integrated from it, and the direction from the attitude. The heading starts at the first sample and again on Recenter: both sticks held for one second
 // (L3 + R3, on the touch gamepad too), which also zeroes the angle. DM_MOTION=0 publishes no motion samples.
-// On iOS 27+, deviceMotionBody makes Core Motion report in the pad view's frame, regardless of display orientation. Before that, the hardware frame is
-// mapped by the interface orientation. The body-frame mapping is identity; the older hardware-frame mapping accounts for landscape left/right.
+// On iOS 27+, deviceMotionBody makes Core Motion report in the pad view's frame. Before that, the hardware frame is mapped by interface orientation.
+// In Split View on iPhone Duo's inner display, Core Motion may silently fall back to the hardware frame; this remains an upstream limitation.
+// The body-frame mapping is identity; the older hardware-frame mapping accounts for landscape left/right.
 static CMMotionManager *g_motion;
 static _Atomic int g_home_right = 1;   // landscape right; updated on the main thread
 static BOOL g_motion_body;
