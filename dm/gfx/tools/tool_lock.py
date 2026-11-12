@@ -31,7 +31,7 @@ NO_RUN = 'does not run'
 def xlate_embedded():
     """The source digest the translator embeds (dmsh_xlate --source-sha), or 'does not run (<its first error line>)', so a translator that cannot start (missing, not executable, a download
     quarantined by macOS) is named as such rather than read as an empty digest and a stale translator"""
-    try: r = subprocess.run([os.path.join(XLATE_DIR, 'dmsh_xlate'), '--source-sha'], capture_output=True, text=True, errors='replace', timeout=60)
+    try: r = subprocess.run([xlate_path(), '--source-sha'], capture_output=True, text=True, errors='replace', timeout=60)
     except (OSError, subprocess.SubprocessError) as e: return f'{NO_RUN} ({e})'
     if r.returncode == 0 and r.stdout.strip(): return r.stdout.strip()
     return '%s (%s)' % (NO_RUN, (r.stderr.strip().splitlines() or r.stdout.strip().splitlines() or [f'exit code {r.returncode}'])[0])
