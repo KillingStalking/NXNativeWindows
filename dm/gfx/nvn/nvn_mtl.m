@@ -1891,6 +1891,10 @@ static int tex_atomic_capable(id<MTLTexture> base) { return pf_r32i(base.pixelFo
 static MTLTextureDescriptor *tex_desc(const tex_t *t, int packaged) {
     uint32_t pf = 0; uint8_t swz[4];
     if (!nvn_fmt_to_mtl(t->d.format, &pf, swz) || !pf) { RED_ONCE(0, "texture format %#x has no Metal equivalent (first case)", t->d.format); return nil; }
+    if (nvn_bc_soft && t->d.target == 2) {
+        uint32_t bc = nvn_fmt_bc_soft(t->d.format);
+        if (bc) pf = bc_soft_target_for_texture(bc, 1, NULL);
+    }
     // Metal's limits: 16384 in 2D, 2048 in 3D, 2048 array layers; beyond them Metal aborts the process on an assertion, so they are caught here with a red line
     if (t->d.width > 16384 || t->d.height > 16384 || t->d.depth > 2048) { RED_ONCE(71, "texture size exceeds Metal limits: %u×%u×%u levels %u format %#x target %d (first case ser=%llu)", t->d.width, t->d.height, t->d.depth, t->d.levels, t->d.format, t->d.target, (unsigned long long)t->serial); return nil; }
     MTLTextureDescriptor *d = [MTLTextureDescriptor new];
@@ -2311,13 +2315,13 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
     int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
     unsigned layers = (t->d.target == 4 || t->d.target == 9) ? t->d.depth : t->d.target == 8 ? 6 : t->d.target == 3 ? t->d.height : 1;   // a cube array's depth counts layer-faces (tex_desc)
     // BC blocks on a GPU without BC (nvn_bc_soft): the texture has the uncompressed format bc_soft_target names; each level is deswizzled as blocks, then decoded into the staging buffer
-    int obpp = 0; uint32_t bcs = nvn_fmt_bc_soft(t->d.format); if (bcs) bc_soft_target(bcs, &obpp);
+    int obpp = 0; uint32_t bcs = nvn_fmt_bc_soft(t->d.format); if (bcs) bc_soft_target_for_texture(bcs, t->d.target == 2, &obpp);
     uint32_t astc_pf = 0; int astc_kind = 0;
     int astc_bc = bcs && t->d.target != 2 && t->d.samples <= 1 && nvn_bc_astc_fmt((uint32_t)t->d.format, &astc_pf, &astc_kind);
     size_t total = 0;
     for (unsigned l = 0; l < d.mipmapLevelCount; l++) {
         uint32_t w = MAX(t->d.width >> l, 1u), h = MAX(t->d.height >> l, 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
-        total += bcs ? (size_t)((w + 3) / 4) * 4 * obpp * bc_soft_rows(bcs, h) * z * layers : (size_t)((w + bw - 1) / bw) * bpb * ((h + bh - 1) / bh) * z * layers;
+        total += bcs ? (size_t)((w + 3) / 4) * 4 * obpp * bc_soft_rows_for_texture(bcs, h, t->d.target == 2) * z * layers : (size_t)((w + bw - 1) / bw) * bpb * ((h + bh - 1) / bh) * z * layers;
     }
     g_bp_up_bytes += total;
     size_t ctotal = 0, abase = 0, atotal = astc_bc ? total : 0;
@@ -2406,7 +2410,7 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
             for (unsigned y = 0; y < layers; y++) {
                 if (nvn_deswizzle(&t->d, l, y, src, raw, pitch)) { RED_ONCE(9, "deswizzle failed format %#x target %d", t->d.format, t->d.target); break; }
                 for (uint32_t zi = 0; zi < z; zi++)
-                    bc_soft_decode(bcs, raw + zi * pitch * rows, pitch, w, h, (uint8_t *)stg.contents + off + zi * dpitch * drows, dpitch);
+                    bc_soft_decode_for_texture(bcs, t->d.target == 2, raw + zi * pitch * rows, pitch, w, h, (uint8_t *)stg.contents + off + zi * dpitch * drows, dpitch);
                 up_blit_add(stg, off, dpitch, dpitch * drows, MTLSizeMake(w, h, z), mt, y, l);
                 off += dpitch * drows * z;
             }
@@ -9661,14 +9665,14 @@ static void copy_b2t(const p_copy_b2t *c) {
         FILE *f = fopen(p, "wb"); if (f) { fwrite((const uint8_t *)((__bridge id<MTLBuffer>)mb).contents + mo, 1, img * nz, f); fclose(f); } } }
     uint32_t bcs = nvn_fmt_bc_soft(c->tex->d.format);
     if (bcs) {   // BC blocks into a texture with the decoded format (nvn_bc_soft): decoded on the CPU from the pool's current bytes into a staging buffer, then copied as pixels
-        int obpp = 0; bc_soft_target(bcs, &obpp);
+        int obpp = 0; bc_soft_target_for_texture(bcs, is3d, &obpp);
         uint32_t w = (uint32_t)c->r.width, h = (uint32_t)c->r.height;
-        size_t dpitch = (size_t)((w + 3) / 4) * 4 * obpp, drows = bc_soft_rows(bcs, h), dimg = dpitch * drows;
+        size_t dpitch = (size_t)((w + 3) / 4) * 4 * obpp, drows = bc_soft_rows_for_texture(bcs, h, is3d), dimg = dpitch * drows;
         id<MTLBuffer> stg = [g_dev newBufferWithLength:dimg * nz ? dimg * nz : 16 options:MTLResourceStorageModeShared];
         if (!stg) { RED_ONCE(85, "buffer→texture copy: no staging buffer for the decoded BC blocks (%zu bytes)", dimg * nz); return; }
         res_add(stg);
         const uint8_t *s = (const uint8_t *)((__bridge id<MTLBuffer>)mb).contents + mo;
-        for (int z = 0; z < nz; z++) bc_soft_decode(bcs, s + (size_t)z * img, row, w, h, (uint8_t *)stg.contents + (size_t)z * dimg, dpitch);
+        for (int z = 0; z < nz; z++) bc_soft_decode_for_texture(bcs, is3d, s + (size_t)z * img, row, w, h, (uint8_t *)stg.contents + (size_t)z * dimg, dpitch);
         id<MTL4ComputeCommandEncoder> bb = blit();
         if (is3d) enc_b_copy_buffer_texture(bb, stg, 0, dpitch, dimg, MTLSizeMake(w, h, nz), t, 0, level, MTLOriginMake(c->r.xoffset, c->r.yoffset, c->r.zoffset));
         else for (int z = 0; z < nz; z++)

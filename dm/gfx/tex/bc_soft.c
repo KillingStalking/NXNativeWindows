@@ -36,6 +36,20 @@ uint32_t bc_soft_target(uint32_t pf, int *bpp) {
     return o;
 }
 size_t bc_soft_rows(uint32_t pf, uint32_t h) { uint32_t o = bc_soft_target(pf, NULL); return o == ASTC4 || o == ASTC4_S ? (h + 3) / 4 : (size_t)(h + 3) / 4 * 4; }
+// ASTC 3D texture support is not portable across the Metal devices this port targets.
+// Keep 3D BC textures in ordinary pixel formats; the BC decoder below then writes pixels, not ASTC blocks.
+uint32_t bc_soft_target_for_texture(uint32_t pf, int is_3d, int *bpp) {
+    uint32_t o = bc_soft_target(pf, bpp);
+    if (is_3d && (o == ASTC4 || o == ASTC4_S)) {
+        o = (o == ASTC4_S) ? RGBA8_S : RGBA8;
+        if (bpp) *bpp = 4;
+    }
+    return o;
+}
+size_t bc_soft_rows_for_texture(uint32_t pf, uint32_t h, int is_3d) {
+    uint32_t o = bc_soft_target_for_texture(pf, is_3d, NULL);
+    return o == ASTC4 || o == ASTC4_S ? (h + 3) / 4 : (size_t)(h + 3) / 4 * 4;
+}
 
 // ---- bit reading, LSB first over 128 bits ----
 typedef struct { uint64_t lo, hi; int pos; } bits_t;
@@ -348,26 +362,34 @@ static void block_out(uint32_t pf, const uint8_t *p, uint8_t *dst, size_t dst_pi
 }
 void bc_soft_astc_pixels(const uint8_t *rgba16, uint8_t *out) { astc_encode(rgba16, out); }   // for tests: 16 RGBA8 texels into one ASTC 4x4 block
 int bc_soft_out_block(uint32_t pf, const uint8_t *block, uint8_t *out, size_t out_pitch) { if (!bc_soft_target(pf, NULL)) return -1; block_out(pf, block, out, out_pitch); return 0; }   // for tests: one block in the staging layout (16 bytes for ASTC)
-static void decode_rows(uint32_t pf, const uint8_t *src, size_t src_pitch, uint32_t bw, uint32_t by0, uint32_t by1, uint8_t *dst, size_t dst_pitch, int bpp, size_t bsz) {
-    uint32_t o = bc_soft_target(pf, NULL); int astc = o == ASTC4 || o == ASTC4_S;   // ASTC: one destination row per block row
+static void decode_rows(uint32_t pf, const uint8_t *src, size_t src_pitch, uint32_t bw, uint32_t by0, uint32_t by1, uint8_t *dst, size_t dst_pitch, int bpp, size_t bsz, int force_pixels) {
+    uint32_t o = bc_soft_target_for_texture(pf, force_pixels, NULL);
+    int astc = !force_pixels && (o == ASTC4 || o == ASTC4_S);
     for (uint32_t by = by0; by < by1; by++)
-        for (uint32_t bx = 0; bx < bw; bx++)
-            block_out(pf, src + by * src_pitch + bx * bsz, dst + (size_t)by * (astc ? 1 : 4) * dst_pitch + (size_t)bx * 4 * bpp, dst_pitch);
+        for (uint32_t bx = 0; bx < bw; bx++) {
+            uint8_t *out = dst + (size_t)by * (astc ? 1 : 4) * dst_pitch + (size_t)bx * 4 * bpp;
+            const uint8_t *in = src + by * src_pitch + bx * bsz;
+            if (force_pixels) bc_soft_block(pf, in, out, dst_pitch);
+            else block_out(pf, in, out, dst_pitch);
+        }
 }
-int bc_soft_decode(uint32_t pf, const uint8_t *src, size_t src_pitch, uint32_t w, uint32_t h, uint8_t *dst, size_t dst_pitch) {
-    int bpp; if (!bc_soft_target(pf, &bpp)) return -1;
+int bc_soft_decode_for_texture(uint32_t pf, int is_3d, const uint8_t *src, size_t src_pitch, uint32_t w, uint32_t h, uint8_t *dst, size_t dst_pitch) {
+    int bpp; if (!bc_soft_target_for_texture(pf, is_3d, &bpp)) return -1;
     size_t bsz = (pf == BC1 || pf == BC1_S || pf == BC4_U || pf == BC4_S) ? 8 : 16;
     uint32_t bw = (w + 3) / 4, bh = (h + 3) / 4;
 #ifdef __APPLE__
-    if ((uint64_t)bw * bh >= 1024) {   // big levels on every core: block rows in bands of 8 (a 2048² level is 512 rows; the decode is otherwise the upload's longest step)
+    if ((uint64_t)bw * bh >= 1024) {
         uint32_t bands = (bh + 7) / 8;
         dispatch_apply(bands, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^(size_t i) {
             uint32_t a = (uint32_t)i * 8, b = a + 8 < bh ? a + 8 : bh;
-            decode_rows(pf, src, src_pitch, bw, a, b, dst, dst_pitch, bpp, bsz);
+            decode_rows(pf, src, src_pitch, bw, a, b, dst, dst_pitch, bpp, bsz, is_3d);
         });
         return 0;
     }
 #endif
-    decode_rows(pf, src, src_pitch, bw, 0, bh, dst, dst_pitch, bpp, bsz);
+    decode_rows(pf, src, src_pitch, bw, 0, bh, dst, dst_pitch, bpp, bsz, is_3d);
     return 0;
+}
+int bc_soft_decode(uint32_t pf, const uint8_t *src, size_t src_pitch, uint32_t w, uint32_t h, uint8_t *dst, size_t dst_pitch) {
+    return bc_soft_decode_for_texture(pf, 0, src, src_pitch, w, h, dst, dst_pitch);
 }
