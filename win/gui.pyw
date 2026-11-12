@@ -155,6 +155,7 @@ class Choice(Surface):
         t = tk.Frame(b, bg=FIELD); t.pack(side='left', padx=(10, 0), fill='x', expand=True)
         t1 = tk.Label(t, text=title, bg=FIELD, fg=TEXT, font=(FONT, 10, 'bold'), anchor='w'); t1.pack(fill='x')
         t2 = tk.Label(t, text=sub, bg=FIELD, fg=MUTED, font=(FONT, 9), anchor='w', justify='left', wraplength=290); t2.pack(fill='x')
+        t.bind('<Configure>', lambda e, label=t2: label.configure(wraplength=max(180, e.width)))
         for w in (self, b, self.mark, t, t1, t2):
             w.configure(cursor='hand2'); w.bind('<Button-1>', lambda e: self.command())
         self.select(False)
@@ -231,8 +232,9 @@ class App(tk.Tk):
     # ---- layout ----
     def _build(self):
         # The form scrolls independently; the build log stays docked at the bottom.
-        shell = tk.Frame(self, bg=BG); shell.pack(fill='both', expand=True)
-        shell.grid_rowconfigure(0, weight=1); shell.grid_columnconfigure(0, weight=1)
+        self.shell = tk.Frame(self, bg=BG); self.shell.pack(fill='both', expand=True)
+        self.shell.grid_rowconfigure(0, weight=1); self.shell.grid_columnconfigure(0, weight=1)
+        shell = self.shell
         self.main_canvas = tk.Canvas(shell, bg=BG, highlightthickness=0, bd=0)
         self.main_scroll = ttk.Scrollbar(shell, orient='vertical', command=self.main_canvas.yview, style='Dark.Vertical.TScrollbar')
         self.main_canvas.configure(yscrollcommand=self.main_scroll.set)
@@ -382,6 +384,7 @@ class App(tk.Tk):
                 x = tk.Label(rb, text='✕', bg=FIELD, fg=FAINT, font=(FONT, 10), cursor='hand2'); x.pack(side='right', padx=(10, 4))
                 x.bind('<Button-1>', lambda e, i=i: self._remove(i)); x.bind('<Enter>', lambda e, x=x: x.configure(fg=BAD)); x.bind('<Leave>', lambda e, x=x: x.configure(fg=FAINT))
                 tk.Label(rb, text=human(p.stat().st_size) if p.exists() else 'missing', bg=FIELD, fg=MUTED, font=(FONT, 9)).pack(side='right')
+            self.rows_view.configure(height=min(156, max(58, len(self.files) * 62)))
         for wdg in self.key_row.winfo_children(): wdg.destroy()
         r = Surface(self.key_row, pad=10, radius=12, fill=FIELD, outline=BORDER, bg=CARD); r.pack(fill='x')
         rb = r.body; rb.configure(bg=FIELD)
@@ -475,7 +478,7 @@ class App(tk.Tk):
     def _toggle_details(self):
         self.details = not self.details
         if self.details:
-            self.det.pack(side='bottom', fill='x', padx=28, pady=(0, 14))
+            self.det.pack(side='bottom', fill='x', padx=28, pady=(0, 14), before=self.shell)
             self.det_link.configure(text='Hide details')
         else:
             self.det.pack_forget()
