@@ -9,7 +9,7 @@
 #include <stdint.h>
 #include <string.h>
 
-typedef struct { float acc[3], gyro[3], angle[3], dir[9]; int home_right; } dm_motion;   // acc in G, gyro in revolutions / s, angle in revolutions, controller frame; home_right: the interface orientation it was mapped for (only logged)
+typedef struct { float acc[3], gyro[3], angle[3], dir[9]; int home_right; } dm_motion;   // acc in G, gyro in revolutions / s, angle in revolutions, controller frame; home_right: 1/0 for landscape hardware frame, -1 for the pad view's frame
 void dm_phone_motion_set(const dm_motion *m);   // publishes the newest sample; NULL withdraws it (the sensor lies flat again)
 
 // ---- the frame mapping (pure; shared by the iOS front end and tests/t_motion.c) ----
