@@ -374,6 +374,8 @@ static void decode_rows(uint32_t pf, const uint8_t *src, size_t src_pitch, uint3
         }
 }
 int bc_soft_decode_for_texture(uint32_t pf, int is_3d, const uint8_t *src, size_t src_pitch, uint32_t w, uint32_t h, uint8_t *dst, size_t dst_pitch) {
+    uint32_t original_target = bc_soft_target(pf, NULL);
+    int force_pixels = is_3d && (original_target == ASTC4 || original_target == ASTC4_S);
     int bpp; if (!bc_soft_target_for_texture(pf, is_3d, &bpp)) return -1;
     size_t bsz = (pf == BC1 || pf == BC1_S || pf == BC4_U || pf == BC4_S) ? 8 : 16;
     uint32_t bw = (w + 3) / 4, bh = (h + 3) / 4;
@@ -382,7 +384,7 @@ int bc_soft_decode_for_texture(uint32_t pf, int is_3d, const uint8_t *src, size_
         uint32_t bands = (bh + 7) / 8;
         dispatch_apply(bands, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^(size_t i) {
             uint32_t a = (uint32_t)i * 8, b = a + 8 < bh ? a + 8 : bh;
-            decode_rows(pf, src, src_pitch, bw, a, b, dst, dst_pitch, bpp, bsz, is_3d);
+            decode_rows(pf, src, src_pitch, bw, a, b, dst, dst_pitch, bpp, bsz, force_pixels);
         });
         return 0;
     }
