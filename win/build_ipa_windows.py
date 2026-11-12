@@ -125,6 +125,46 @@ def main():
 
         up.find_nx_extract = find_windows_nx_extract
 
+        # dmsh_xlate is also committed as a macOS NativeAOT binary. Build the same
+        # in-repo C# translator as a Windows .NET apphost, cached by its embedded-source
+        # digest. The shim runs the adjacent DLL through the installed .NET runtime.
+        import hashlib, tempfile
+        gfx_tools = REPO / 'dm/gfx/tools'
+        xlate_source_sha = hashlib.sha256(
+            (gfx_tools / 'dmsh_xlate/Program.cs').read_bytes() +
+            (gfx_tools / 'dmsh_xlate/dmsh_xlate.csproj').read_bytes()
+        ).hexdigest()[:16]
+        xlate_out = Path(tempfile.gettempdir()) / 'nxnative-windows' / 'dmsh_xlate' / xlate_source_sha
+        xlate_exe = xlate_out / 'dmsh_xlate.exe'
+        if not xlate_exe.is_file():
+            xlate_out.mkdir(parents=True, exist_ok=True)
+            xlate_log = xlate_out / 'build.log'
+            xlate_env = dict(os.environ)
+            xlate_env['DOTNET_CLI_DO_NOT_USE_MSBUILD_SERVER'] = '1'
+            xlate_env['MSBUILDDISABLENODEREUSE'] = '1'
+            up.run([
+                'dotnet', 'publish', gfx_tools / 'dmsh_xlate/dmsh_xlate.csproj',
+                '-c', 'Release', '-r', 'win-x64', '--self-contained', 'false',
+                '--disable-build-servers', '-m:1', '-nodeReuse:false',
+                '-p:UseSharedCompilation=false', '-p:BuildInParallel=false',
+                '-p:PublishAot=false', '-o', xlate_out, '-v', 'quiet', '-nologo',
+            ], xlate_log, env=xlate_env)
+            if not xlate_exe.is_file() or not (xlate_out / 'dmsh_xlate.dll').is_file():
+                raise BuildError(f'dmsh_xlate did not produce its Windows apphost and DLL; see {xlate_log}')
+        # Set this before own_compilers.py / dmsh_chain.py are imported in child processes.
+        os.environ['XLATE'] = str(xlate_exe)
+        try:
+            probe = subprocess.run(
+                [str(xlate_exe), '--source-sha'], capture_output=True, text=True,
+                env=os.environ.copy(), timeout=60, errors='replace',
+            )
+        except (OSError, subprocess.SubprocessError) as e:
+            raise BuildError(f'Windows dmsh_xlate could not start ({e}): {xlate_exe}') from e
+        got = probe.stdout.strip()
+        if probe.returncode or got != xlate_source_sha:
+            detail = (probe.stderr.strip().splitlines() or [f'exit code {probe.returncode}'])[0]
+            raise BuildError(f'Windows dmsh_xlate source check failed (embedded {got or "no digest"} / expected {xlate_source_sha}): {detail}; see {xlate_out}')
+
     # address-region cuts for an sdk build sdk_patches.py does not register (win/sdk_auto_cuts.py), for a game with virtual address memory: written beside the rewrite, read by the
     # shim when patch_nso.py imports sdk_patches, and part of the rewrite's cache key (patch_files)
     import sdk_auto_cuts, json
