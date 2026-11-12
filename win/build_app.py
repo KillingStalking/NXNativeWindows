@@ -186,22 +186,21 @@ def make_icons(src, app):
 
 
 _LISTED = {}
+
 def list_files(src):
-    """[(path, path relative to src with '/', size)] of a folder, by os.scandir (on Windows the sizes come with the listing, no stat per file: TotK's RomFS is 300,000 files).
-    Listed once per build"""
-    src = Path(src)
+    """List files in a normal directory or a virtual RomFS image."""
+    src = rfs.Path(src)
     if src in _LISTED: return _LISTED[src]
     out, stack = [], [(str(src), '')]
     while stack:
         d, rel = stack.pop()
-        with os.scandir(d) as it:
+        with rfs.os.scandir(d) as it:
             for e in it:
                 r = rel + e.name
                 if e.is_dir(follow_symlinks=False): stack.append((e.path, r + '/'))
-                else: out.append((e.path, r, e.stat(follow_symlinks=False).st_size))
+                else: out.append((e.path, r, e.stat().st_size))
     out.sort(key=lambda x: x[1]); _LISTED[src] = out
     return out
-
 
 def split_data(data, parts, stamp, name, skip_suffix=()):
     """Fill the data folder of a split build: {path inside it: source folder}. Files are hard-linked (no disk space) on several threads, and copied where links fail
@@ -221,7 +220,9 @@ def split_data(data, parts, stamp, name, skip_suffix=()):
     def one(item):
         f, r, _ = item; dst = tmp / r
         try: os.link(f, dst)
-        except OSError: shutil.copy2(f, dst)
+        except OSError:
+            with rfs.open(f, 'rb') as src:
+                with open(dst, 'wb') as out: shutil.copyfileobj(src, out, 1024 * 1024)
     with cf.ThreadPoolExecutor(min(32, (os.cpu_count() or 4) * 2)) as ex: list(ex.map(one, todo, chunksize=256))
     (tmp / 'nxw_data.tsv').write_text(sig, encoding='utf-8')
     (tmp / 'README.txt').write_text(
@@ -272,7 +273,6 @@ def main():
         if not ((patched / f'{m}.patched.bin').exists() and (patched / f'{m}.fixups.tsv').exists()): die(f'no rewritten module {patched}/{m} (run dm/tools/patch_nso.py first)')
     if not (romfs / marker).exists(): die(f'no RomFS at {romfs} (missing {marker})')
     if image and env.get('NXW_MODS_ROMFS'): die('mods\' RomFS folders are laid over a RomFS folder, and this extraction is one RomFS image (RomFS.img)')
-    if image and env.get('NXW_SPLIT_DATA', '') not in ('', '0'): die('a split build copies the RomFS as a folder, and this extraction is one RomFS image (RomFS.img): build without --split-data')
     if env.get('NXW_MODS_ROMFS'):   # mods' RomFS folders (win/mods.py): hard links of the game's files with the mods' laid over them
         import mods
         romfs = mods.overlay_romfs(romfs, env['NXW_MODS_ROMFS'].split(os.pathsep), w / 'build/romfs_mods', log=t)
