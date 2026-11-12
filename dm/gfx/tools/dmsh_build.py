@@ -82,6 +82,16 @@ def record_index(path):   # → (an open descriptor, {a record's key: its bytes'
         offs = [x.start() for x in re.finditer(b'BTCDBTCD', m)] + [n]
         return fd, {m[o + 8:o + 16].hex(): (o, e) for o, e in zip(offs, offs[1:])}
 
+# os.pread is unavailable on Windows. Serialize seek+read to preserve its
+# position-independent semantics if shader reads ever become concurrent.
+_pread_lock = threading.Lock()
+def read_at(fd, size, offset):
+    if hasattr(os, 'pread'):
+        return os.pread(fd, size, offset)
+    with _pread_lock:
+        os.lseek(fd, offset, os.SEEK_SET)
+        return os.read(fd, size)
+
 def clone(src, dst):   # APFS copy-on-write, else a plain copy; the clonefile call, not a cp: a fork of this large process costs about 6 ms
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     dmsh_mtlcache.clone(src, dst)
@@ -931,7 +941,7 @@ def rec_of(key):
         sys.exit(f'[RED] {name} holds no record of shader {key}, which the shader map names: the package and the map come from different shader_split.py runs{old}; '
                  f'split the shaders again (the NSP script does when {dm_dir} is removed)')
     o, e = recs[key]
-    return name, os.pread(fd, e - o, o)
+    return name, read_at(fd, e - o, o)
 for key in keys: digests[key] = shader_key(key, *rec_of(key))
 def plain_digest(k):   # a paired pixel shader's key, also when it is not built this time
     if k in digests: return digests[k]
