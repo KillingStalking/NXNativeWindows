@@ -131,9 +131,9 @@ class BcSoft(unittest.TestCase):
         clang = shutil.which('clang') or (r'C:\Program Files\LLVM\bin\clang.exe' if os.path.exists(r'C:\Program Files\LLVM\bin\clang.exe') else None)
         if os.name != 'nt' or not clang: raise unittest.SkipTest('needs clang on Windows')
         cls.tmp = tempfile.mkdtemp(); crt = Path(cls.tmp) / 'crt.c'; dll = Path(cls.tmp) / 'bc.dll'
-        crt.write_text('#include <stddef.h>\nvoid *memcpy(void *d, const void *s, size_t n);\nvoid *memset(void *d, int c, size_t n);\n')
         (Path(cls.tmp) / 'string.h').write_text('#pragma once\n#include <stddef.h>\nvoid *memcpy(void *, const void *, size_t);\nvoid *memset(void *, int, size_t);\n')
-        crt.write_text(crt.read_text() + 'void *memcpy(void *d, const void *s, size_t n){ char *a=d; const char *b=s; while(n--) *a++=*b++; return d; }\n'
+        crt.write_text('#include <stddef.h>\n'
+                       'void *memcpy(void *d, const void *s, size_t n){ char *a=d; const char *b=s; while(n--) *a++=*b++; return d; }\n'
                        'void *memset(void *d, int c, size_t n){ char *a=d; while(n--) *a++=(char)c; return d; }\nint _fltused;\n')
         tex = REPO / 'dm/gfx/tex'
         r = subprocess.run([clang, '--target=x86_64-pc-windows-msvc', '-O2', '-ffreestanding', '-fno-builtin', '-nostdlib', '-shared', '-fuse-ld=lld', '-Wl,/NOENTRY',
