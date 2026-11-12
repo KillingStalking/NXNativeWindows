@@ -4,7 +4,7 @@ import io, lzma, os, plistlib, struct, subprocess, sys, tempfile, unittest, zlib
 from pathlib import Path
 WIN = Path(__file__).resolve().parents[1]
 REPO = WIN.parent
-sys.path.insert(0, str(WIN)); sys.path.insert(0, str(WIN / 'sdk'))
+sys.path.insert(0, str(WIN)); sys.path.insert(0, str(WIN / 'sdk')); sys.path.insert(0, str(REPO / 'dm/tools'))
 import xcrun, build_app, extract_xip
 
 
