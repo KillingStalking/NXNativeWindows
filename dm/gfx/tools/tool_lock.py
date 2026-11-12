@@ -10,9 +10,14 @@ from dmsh_chain import LOCK, XLATE_DIR, SPIRV_CROSS, xlate_source_sha
 
 def sha16(p): return hashlib.sha256(open(p, 'rb').read()).hexdigest()[:16]
 
+def xlate_path():
+    # Windows uses the framework-dependent apphost built into the OS temp cache;
+    # the subprocess shim launches its adjacent DLL through the installed .NET runtime.
+    return os.environ.get('XLATE', os.path.join(XLATE_DIR, 'dmsh_xlate' + ('.exe' if os.name == 'nt' else '')))
+
 def tools_now():
     """Actual tool fingerprints: the translator (a native executable that holds the Ryujinx shader library), spirv-cross, metal compiler (macOS / iOS)"""
-    xl = os.path.join(XLATE_DIR, 'dmsh_xlate')
+    xl = xlate_path()
     t: dict = {'dmsh_xlate': sha16(xl) if os.path.isfile(xl) else 'missing'}
     t['xlate_source'] = xlate_embedded()
     sc = shutil.which(SPIRV_CROSS)
@@ -31,12 +36,16 @@ def xlate_embedded():
     if r.returncode == 0 and r.stdout.strip(): return r.stdout.strip()
     return '%s (%s)' % (NO_RUN, (r.stderr.strip().splitlines() or r.stdout.strip().splitlines() or [f'exit code {r.returncode}'])[0])
 
-def no_run_message(embedded): return f'the translator {embedded}: {os.path.join(XLATE_DIR, "dmsh_xlate")} is the committed native executable (dm/tools/native_tools.sh builds it); check out the repository again if it is missing or damaged'
+def no_run_message(embedded): return f'the translator {embedded}: {xlate_path()} could not be started (on macOS this is the committed native executable; on Windows it is built from the in-repo C# sources)'
 
 def check_tools():
     want = dict(l.rstrip('\n').split('\t', 1) for l in open(LOCK) if '\t' in l and not l.startswith('#'))
     now = tools_now(); ran = not now['xlate_source'].startswith(NO_RUN)
-    bad = [f'{k}: lock {want.get(k)} / actual {v}' for k, v in now.items() if want.get(k) != v and (ran or k != 'xlate_source')]
+    # The lock records the tested macOS NativeAOT executable. A Windows apphost is a different
+    # PE/.NET artifact, so compare its embedded source digest instead of its binary fingerprint.
+    bad = [f'{k}: lock {want.get(k)} / actual {v}' for k, v in now.items()
+           if want.get(k) != v and (ran or k != 'xlate_source')
+           and not (os.name == 'nt' and k == 'dmsh_xlate')]
     if not ran: bad.append(no_run_message(now['xlate_source']))
     elif now['xlate_source'] != xlate_source_sha(): bad.append(f'the translator was not built from the in-repo source: embedded source {now["xlate_source"]} / in repo {xlate_source_sha()} (rebuild it: dm/tools/native_tools.sh dmsh_xlate)')
     return bad
