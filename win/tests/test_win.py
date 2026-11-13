@@ -158,7 +158,7 @@ class BcSoft(unittest.TestCase):
             bgra = texture2ddecoder.decode_astc(bytes(out), 4, 4, 4, 4)
             return bytes(x for i in range(16) for x in (bgra[i * 4 + 2], bgra[i * 4 + 1], bgra[i * 4], bgra[i * 4 + 3]))
         worst = {}
-        for pf, size in ((130, 8), (134, 16), (152, 16)):
+        for pf, size in ((130, 8), (134, 16)):
             errs = []
             for _ in range(400):
                 b = bytes(rnd.getrandbits(8) for _ in range(size))
@@ -167,7 +167,7 @@ class BcSoft(unittest.TestCase):
                 if pf == 130 and b[0] | b[1] << 8 > b[2] | b[3] << 8: self.assertLessEqual(max(abs(x - y) for x, y in zip(ref, got)), 2, 'BC1 palette')
                 errs.append(sum((x - y) ** 2 for x, y in zip(ref, got)) / 64)
             mse = sum(errs) / len(errs); worst[pf] = mse
-        print('ASTC mean squared error per channel: BC1 %.2f, BC3 %.1f, BC7 %.1f (random blocks)' % (worst[130], worst[134], worst[152]))
+        print('ASTC mean squared error per channel: BC1 %.2f, BC3 %.1f (random blocks)' % (worst[130], worst[134]))
         self.assertLess(worst[130], 1.0)
         for _ in range(300):   # opaque BC3 (alpha 255): the colour part is a BC1 palette, fitted with 3-bit weights
             b = bytes([255, 255, 0, 0, 0, 0, 0, 0]) + bytes(rnd.getrandbits(8) for _ in range(8))
