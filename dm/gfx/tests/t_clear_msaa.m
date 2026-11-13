@@ -28,7 +28,7 @@ int main(void) { @autoreleasepool {
         rp.colorAttachments[0].storeAction = MTLStoreActionStore; rp.colorAttachments[0].clearColor = MTLClearColorMake(.75,.5,.25,.875);
         id<MTLCommandBuffer> cb = [q commandBuffer]; [[cb renderCommandEncoderWithDescriptor:rp] endEncoding]; [cb commit]; [cb waitUntilCompleted];
         CHECK(cb.status == MTLCommandBufferStatusCompleted);
-        res_add(t); state_reset(); memset(&R,0,sizeof R); mtl_sub_begin(); tex_zero_fill(t); mtl_sub_commit(); mtl_drain();
+        res_add(t); state_reset(); memset(&R,0,sizeof R); mtl_sub_begin(); tex_zero_fill(t, 0); mtl_sub_commit(); mtl_drain();
         CHECK(!mtl_last_commit_error());
         id<MTLBuffer> out = [g_dev newBufferWithLength:64*samples*16 options:MTLResourceStorageModeShared];
         cb = [q commandBuffer]; id<MTLComputeCommandEncoder> e = [cb computeCommandEncoder];
