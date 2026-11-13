@@ -10093,8 +10093,33 @@ static const char *cctx_snap(void) {
 }
 // When the game itself asks for 30 fps (pacing by the game's present interval, interval 2, hle_nvn.c) the display link runs at 30 Hz too: games whose logic counts frames, such as Engage, are not pulled up to 60 fps by the display link on iOS
 __attribute__((weak)) int nvn_game_fps(void) { return 60; }   // hle_nvn.c provides the strong definition
-int mtl_fps_target(void) { static int env = -2; if (env == -2) { const char *e = getenv("DM_FPS"); env = e ? atoi(e) : -1; if (env != 30 && env != 60) env = -1; else MLOG("DM_FPS=%d: frame rate pinned by the test switch", env); }
-    return dm_mem_guard() ? 30 : env > 0 ? env : nvn_game_fps() == 30 ? 30 : 60; }   // the memory guard caps every game at 30 while memory is low
+// Runtime frame-rate override: 0 = Auto (the game's own request), 30 or 60 = pinned.
+// DM_FPS initializes the same setting; mtl_fps_set may change it while the app is running.
+static _Atomic int g_fps_user = -1;
+static int fps_env(void) {
+    const char *e = getenv("DM_FPS"); int v = e ? atoi(e) : 0;
+    if (v != 30 && v != 60) v = 0;
+    else MLOG("DM_FPS=%d: frame rate pinned by launcher / environment", v);
+    return v;
+}
+int mtl_fps_user(void) {
+    int u = atomic_load(&g_fps_user);
+    if (u < 0) { int e = fps_env(), x = -1; atomic_compare_exchange_strong(&g_fps_user, &x, e); u = atomic_load(&g_fps_user); }
+    return u;
+}
+void mtl_fps_set(int v) {   // 0 = Auto, 30 / 60 = pinned; any thread
+    if (v != 0 && v != 30 && v != 60) return;
+    int old = mtl_fps_user(); atomic_store(&g_fps_user, v);
+    if (old != v) MLOG("frame rate switch: %s -> %s (frame %llu)",
+        old ? (old == 30 ? "30 fps" : "60 fps") : "Auto",
+        v ? (v == 30 ? "30 fps" : "60 fps") : "Auto",
+        (unsigned long long)atomic_load(&g_cur_frame));
+}
+int mtl_fps_target(void) {
+    if (dm_mem_guard()) return 30;   // memory guard remains authoritative
+    int u = mtl_fps_user(); if (u > 0) return u;
+    int game = nvn_game_fps(); return game == 30 || game == 120 ? game : 60;
+}
 // Hand a submission to the GPU in segments (DM_NVN_CUT=draw count, 0 = off; default 64): when the game holds back the next frame's submit until this frame's GPU work is done (The Legend of Zelda: Breath of the Wild: the main thread's nvnSyncWait on the fence of the frame just submitted),
 // the GPU sits idle for the milliseconds the host spends translating inside the submit (in the shrine each frame is GPU 13 ms + translation 7 ms back to back). Each time this many draws have accumulated, the command buffer encoded so far is committed between two passes: the GPU runs the earlier passes while the CPU translates the later ones.
 // Cut only when no encoder is open and no pass is deferred / merged / hoisted; commit this batch's uploads first (later draws use them). The fence signal and completion work stay on the last segment only: the queue executes in commit order and every encoder starts with a queue barrier
