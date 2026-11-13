@@ -79,7 +79,7 @@ _fd_paths = {}   # original package descriptor -> path; workers reopen their own
 def record_index(path):   # → (an open descriptor, {a record's key: its bytes' (start, end)}): shader_split.py writes each record's key at +0x08, its bytes from its marker to the next one
     # Scanned through a read-only mapping that is closed again, so no package stays in this process. Pokopia's ps_rdb.bin (4.25 GB) read and cut into its 105,118
     # records left the process at 8.7 GB, and each fork (every spirv-cross and Metal compile) then took 75 ms instead of 3 with the GIL held: one shader worker at a time (GitHub issue #1036)
-    fd = os.open(path, os.O_RDONLY); _fd_paths[fd] = path; n = os.fstat(fd).st_size
+    fd = os.open(path, os.O_RDONLY | getattr(os, 'O_BINARY', 0)); _fd_paths[fd] = path; n = os.fstat(fd).st_size
     if not n: return fd, {}
     with mmap.mmap(fd, n, access=mmap.ACCESS_READ) as m:
         # Do not search for the next marker in arbitrary shader bytes: BTCDBTCD
@@ -125,7 +125,7 @@ def read_at(fd, size, offset):
             key = (os.getpid(), path)
             read_fd = _read_fds.get(key)
             if read_fd is None:
-                read_fd = os.open(path, os.O_RDONLY)
+                read_fd = os.open(path, os.O_RDONLY | getattr(os, 'O_BINARY', 0))
                 _read_fds[key] = read_fd
             os.lseek(read_fd, offset, os.SEEK_SET)
             while done < size:
