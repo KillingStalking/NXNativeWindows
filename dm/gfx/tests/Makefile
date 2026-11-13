@@ -640,3 +640,11 @@ check_t_pool_standin: t_pool_standin
 # GPU BC1/BC2/BC3 → ASTC transcoder: compare Metal output byte-for-byte with the C reference.
 t_bc2astc_gpu: t_bc2astc_gpu.m ../tex/nvn_bc2astc.c ../tex/nvn_bc2astc.h ../tex/bc2astc_core.h ../tex/bc2astc_body.inc ../tex/bc2astc_msl.h
 	clang $(CFLAGS) -fobjc-arc -o $@ t_bc2astc_gpu.m ../tex/nvn_bc2astc.c $(FW)
+
+
+# Upload ordering and hardware ASTC decode regression tests from no-bc.
+t_up_order: t_up_order.m $(MTL_T_DEP)
+	clang $(CFLAGS) -fobjc-arc -o $@ t_up_order.m $(MTL_T_SRC) $(FW)
+check_t_up_order: RUN_ENV = MTL_DEBUG_LAYER=1
+t_astc_hw: t_astc_hw.m ../tex/nvn_bc2astc.c ../tex/nvn_bc2astc.h ../tex/bc2astc_core.h ../tex/bc2astc_body.inc
+	clang $(CFLAGS) -fobjc-arc -o $@ t_astc_hw.m ../tex/nvn_bc2astc.c $(FW)
