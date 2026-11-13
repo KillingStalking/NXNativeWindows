@@ -248,3 +248,9 @@ void mtl_reg_samp(int id, const samp_par *p);
 void mtl_prog_release(prog_t *p);
 // New serial (> 0, globally increasing)
 uint64_t nvn_new_serial(void);
+
+/* no-bc memory-pressure and FPS controls */
+void mtl_mem_pressure_request(int tier, int reason);       // memory-pressure response (tier 1 / 2; reason 3 = app memory warning)
+void mtl_mem_pressure_tick(uint64_t frame);                 // periodic headroom watermark from the present thread
+void mtl_fps_set(int v);                                   // frame-rate override: 0 = auto, 30 / 60 = pinned
+int mtl_fps_user(void);                                    // current user override (0 / 30 / 60)
