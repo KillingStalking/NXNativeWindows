@@ -7,6 +7,7 @@
 #import <Metal/Metal.h>
 #import <AVFAudio/AVFAudio.h>
 int dm_mem_guard(void);   // nvn_mtl.m: the memory guard level, shown in the HUD
+void mtl_mem_pressure_request(int tier, int reason);   // nvn_mtl.m: request cache trimming after an iOS memory warning
 #include <errno.h>
 #include "front.h"
 #include "hle.h"
