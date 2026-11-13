@@ -1811,6 +1811,34 @@ static void alias_take_over(const alias_key *nk) {
 static __unsafe_unretained id serial_get(uint64_t k) { pthread_mutex_lock(&g_smu); __unsafe_unretained id o = hm_get_id(&g_by_serial, &k); pthread_mutex_unlock(&g_smu); return o; }
 static void serial_put(uint64_t k, id o) { pthread_mutex_lock(&g_smu); id old = hm_get_id(&g_by_serial, &k); if (old) { if (alias_has(old)) defer_obj_unref(old); else defer_obj_release(old); } hm_put_id(&g_by_serial, &k, o); g_ser_gen++; pthread_mutex_unlock(&g_smu); }
 static void serial_del(uint64_t k) { pthread_mutex_lock(&g_smu); id old = hm_get_id(&g_by_serial, &k); if (old) { if (alias_has(old)) defer_obj_unref(old); else defer_obj_release(old); hm_del_id(&g_by_serial, &k); g_ser_gen++; } pthread_mutex_unlock(&g_smu); }   // nothing to drop: the texture ID caches stay valid
+
+static unsigned alias_evict_idle_locked(uint64_t idle_subs, uint64_t *bytes) {
+    CFMutableSetRef held = CFSetCreateMutable(NULL, 0, NULL);
+    unsigned n = 0; alias_key *keys = NULL; uint64_t now = g_fence + 1, total = 0;
+    for (uint32_t i = 0; i < g_by_serial.cap; i++) if (g_by_serial.vals[i]) CFSetAddValue(held, g_by_serial.vals[i]);
+    for (uint32_t i = 0; i < g_ghost.cap; i++) if (g_ghost.vals[i]) CFSetAddValue(held, g_ghost.vals[i]);
+    for (uint32_t i = 0; i < g_alias.cap; i++) {
+        if (!g_alias.vals[i] || CFSetContainsValue(held, g_alias.vals[i])) continue;
+        alias_key k; memcpy(&k, g_alias.keys + (size_t)i * g_alias.klen, sizeof k);
+        uintptr_t seen = (uintptr_t)nvn_hm_get(&g_alias_seen, &k);
+        if (seen && now - seen < idle_subs) continue;
+        id o = (__bridge id)g_alias.vals[i];
+        if ([o conformsToProtocol:@protocol(MTLTexture)] && ((id<MTLTexture>)o).buffer) continue;
+        alias_key *next = realloc(keys, (n + 1) * sizeof *keys); if (!next) break;
+        keys = next; keys[n++] = k;
+    }
+    for (unsigned i = 0; i < n; i++) {
+        void *old = nvn_hm_del(&g_alias, &keys[i]); if (!old) continue;
+        nvn_hm_del(&g_alias_seen, &keys[i]);
+        id o = CFBridgingRelease(old);
+        if (g_alias_set) CFSetRemoveValue(g_alias_set, (__bridge const void *)o);
+        total += ((id<MTLResource>)o).allocatedSize;
+        if (serial_holds(&g_ghost, o)) defer_obj_unref(o); else defer_obj_release(o);
+    }
+    if (n) { g_ser_gen++; g_alias_evicted += n; }
+    CFRelease(held); free(keys); if (bytes) *bytes = total; return n;
+}
+
 // Texture serials owned by a live NVN texture object (TextureInitialize until Finalize or re-initialization, hle_nvn.c). Command records and texture pool registrations snapshot the
 // texture object (tex_snap in hle_nvn.c, mtl_reg_tex), so replay can resolve a texture the game has already finalized: Breath of the Wild records each frame's transient render targets
 // (the HUD captures, the 640x360 half-resolution buffers) and finalizes their objects before it submits. Those serials went back into g_by_serial and stayed there for good, as no second
@@ -1916,16 +1944,18 @@ static void mem_trim_if_requested(void) {
     int tier = atomic_exchange(&g_mp_req, 0); if (!tier) return;
     int reason = atomic_load(&g_mp_reason); uint64_t frame = atomic_load(&g_cur_frame);
     long h = mp_headroom_mb();
+    uint64_t shared_bytes = 0;
     pthread_mutex_lock(&g_smu);
     unsigned before = g_ghost.n;
     ghost_limit_set_locked(64);
     unsigned dropped = ghost_enforce_locked();
     unsigned after = g_ghost.n;
+    unsigned shared = alias_evict_idle_locked(tier >= 2 ? 16 : 64, &shared_bytes);
     pthread_mutex_unlock(&g_smu);
     g_mp_pressured = 1; g_mp_last_tier = tier; g_mp_last_frame = frame;
     static const char *const why[] = {"", "system warning", "system critical", "app memory warning", "headroom watermark", "test switch"};
-    MLOG("memory pressure: tier %d (%s, frame %llu, headroom %ld MB): finalized-texture cache %u -> %u (%u evicted); releases are deferred to the GPU fence",
-         tier, reason >= 1 && reason <= 5 ? why[reason] : "unknown", (unsigned long long)frame, h, before, after, dropped);
+    MLOG("memory pressure: tier %d (%s, frame %llu, headroom %ld MB): finalized-texture cache %u -> %u (%u evicted), unreferenced shared textures %u (%llu MB); releases are deferred to the GPU fence",
+         tier, reason >= 1 && reason <= 5 ? why[reason] : "unknown", (unsigned long long)frame, h, before, after, dropped, shared, (unsigned long long)(shared_bytes >> 20));
 }
 
 void mtl_tex_init(const tex_t *t) {
