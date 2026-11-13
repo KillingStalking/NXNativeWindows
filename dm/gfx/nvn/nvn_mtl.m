@@ -871,7 +871,9 @@ static int tbdr_on(void);
 static void treg_finish_submission(void);
 
 static uint64_t g_sub_serial;   // Submission index (used by the parallel precompile's 'predict only once per submission')
+static void mem_trim_if_requested(void);
 void mtl_sub_begin(void) {
+    mem_trim_if_requested();
     mtl_init(); g_sub_serial++; g_seg = 0; seg_clk_put(g_sclk); g_sclk = NULL; g_rc_npend = 0; g_rc_skip = 0;
     defer_drain();
     defer_reset();
@@ -1853,6 +1855,79 @@ static unsigned ghost_enforce_locked(void) {
     return dropped;
 }
 static void ghost_limit_set_locked(unsigned limit) { g_ghost_limit = limit > NGHOST ? NGHOST : limit; }
+
+static _Atomic int g_mp_req, g_mp_reason;
+static int g_mp_pressured, g_mp_last_tier; static uint64_t g_mp_last_frame, g_mp_hold_until; static long g_mp_fake = -2;
+enum { MP_SRC_WARN = 1, MP_SRC_CRIT = 2, MP_UI = 3, MP_WATER = 4, MP_TEST = 5 };
+void mtl_mem_pressure_request(int tier, int reason) {
+    if (tier < 1) tier = 1; if (tier > 2) tier = 2;
+    int cur = atomic_load(&g_mp_req);
+    while (tier > cur && !atomic_compare_exchange_weak(&g_mp_req, &cur, tier)) {}
+    atomic_store(&g_mp_reason, reason);
+}
+static long mp_headroom_mb(void) {
+    if (g_mp_fake == -2) { const char *e = getenv("DM_MEM_HEADROOM"); g_mp_fake = e ? atol(e) : -1; }
+    if (g_mp_fake >= 0) return g_mp_fake;
+#if TARGET_OS_IPHONE
+    return (long)(os_proc_available_memory() >> 20);
+#else
+    return -1;
+#endif
+}
+void mtl_mem_pressure_tick(uint64_t frame) {
+    static dispatch_source_t src; static const char *sched; static int init;
+    if (!init) {
+        init = 1; sched = getenv("DM_MEM_TRIM");
+        src = dispatch_source_create(DISPATCH_SOURCE_TYPE_MEMORYPRESSURE, 0,
+            DISPATCH_MEMORYPRESSURE_WARN | DISPATCH_MEMORYPRESSURE_CRITICAL,
+            dispatch_get_global_queue(QOS_CLASS_UTILITY, 0));
+        if (src) {
+            dispatch_source_set_event_handler(src, ^{
+                unsigned long m = dispatch_source_get_data(src);
+                mtl_mem_pressure_request(m & DISPATCH_MEMORYPRESSURE_CRITICAL ? 2 : 1,
+                    m & DISPATCH_MEMORYPRESSURE_CRITICAL ? MP_SRC_CRIT : MP_SRC_WARN);
+            });
+            dispatch_resume(src);
+        }
+    }
+    if (sched && *sched) {
+        char *end; unsigned long long at = strtoull(sched, &end, 10);
+        if (*end == ':' && frame >= at) {
+            mtl_mem_pressure_request(atoi(end + 1), MP_TEST);
+            const char *c = strchr(end, ','); sched = c ? c + 1 : "";
+        }
+    }
+    if (frame % 30) return;
+    long h = mp_headroom_mb();
+    if (h >= 0) {
+        int tier = h < 150 ? 2 : h < 300 ? 1 : 0;
+        if (tier && (tier > g_mp_last_tier || frame - g_mp_last_frame >= 300))
+            mtl_mem_pressure_request(tier, MP_WATER);
+        if (h < 450) g_mp_hold_until = frame + 900;
+        if (!tier && g_mp_pressured && h >= 600 && frame >= g_mp_hold_until) {
+            pthread_mutex_lock(&g_smu); ghost_limit_set_locked(NGHOST); pthread_mutex_unlock(&g_smu);
+            g_mp_pressured = 0; g_mp_last_tier = 0;
+            MLOG("memory pressure over: headroom %ld MB, ghost cache restored to %d entries (frame %llu)", h, NGHOST, (unsigned long long)frame);
+        }
+    }
+    if (atomic_load(&g_mp_req)) g_mp_hold_until = frame + 900;
+}
+static void mem_trim_if_requested(void) {
+    int tier = atomic_exchange(&g_mp_req, 0); if (!tier) return;
+    int reason = atomic_load(&g_mp_reason); uint64_t frame = atomic_load(&g_cur_frame);
+    long h = mp_headroom_mb();
+    pthread_mutex_lock(&g_smu);
+    unsigned before = g_ghost.n;
+    ghost_limit_set_locked(64);
+    unsigned dropped = ghost_enforce_locked();
+    unsigned after = g_ghost.n;
+    pthread_mutex_unlock(&g_smu);
+    g_mp_pressured = 1; g_mp_last_tier = tier; g_mp_last_frame = frame;
+    static const char *const why[] = {"", "system warning", "system critical", "app memory warning", "headroom watermark", "test switch"};
+    MLOG("memory pressure: tier %d (%s, frame %llu, headroom %ld MB): finalized-texture cache %u -> %u (%u evicted); releases are deferred to the GPU fence",
+         tier, reason >= 1 && reason <= 5 ? why[reason] : "unknown", (unsigned long long)frame, h, before, after, dropped);
+}
+
 void mtl_tex_init(const tex_t *t) {
     if (!t->serial) return;
     tex_t *desc = image_shape(t) ? malloc(sizeof *desc) : NULL; if (desc) *desc = *t;
