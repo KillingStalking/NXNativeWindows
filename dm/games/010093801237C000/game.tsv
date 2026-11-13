@@ -36,3 +36,7 @@ app_pool	0xCD500000
 # ---- Shader split (shader_split.py; MSHD containers) ----
 shader_groups	/system/shd/=shd
 shader_note	Metroid Dread shaders
+
+# ---- Frame rate ----
+# Steps by elapsed time (verified with DM_FPS=30: game speed normal), so the launcher offers Auto / 30 fps
+fps_cap	1
