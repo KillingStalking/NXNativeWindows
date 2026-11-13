@@ -2639,7 +2639,7 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
         uint32_t w = MAX(t->d.width >> l, 1u), h = MAX(t->d.height >> l, 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
         size_t pitch = (size_t)((w + bw - 1) / bw) * bpb, rows = (h + bh - 1) / bh;
         if (bcs) {
-            size_t dpitch = (size_t)((w + 3) / 4) * 4 * obpp, drows = bc_soft_rows(bcs, h), need = pitch * rows * z;
+            size_t dpitch = (size_t)((w + 3) / 4) * 4 * obpp, drows = keep_rgba8 ? (size_t)((h + 3) / 4) * 4 : bc_soft_rows_for_texture(bcs, h, t->d.target == 2), need = pitch * rows * z;
             if (need > raw_n) { free(raw); if (!(raw = malloc(need))) MDIE("BC decode buffer of %zu bytes failed", need); raw_n = need; }
             for (unsigned y = 0; y < layers; y++) {
                 if (nvn_deswizzle(&t->d, l, y, src, raw, pitch)) { RED_ONCE(9, "deswizzle failed format %#x target %d", t->d.format, t->d.target); break; }
