@@ -500,11 +500,15 @@ void mtl_init(void) {
     if (!g_dev) MDIE("no Metal device");
     if (!g_dev.hasUnifiedMemory) MDIE("needs a unified-memory device (zero-copy memory pools)");
     {   // BC textures on a GPU that cannot sample them (A16 and older iPhone / iPad GPUs): decoded on the CPU at upload into uncompressed formats (bc_soft.c). DM_BC_SOFT=1 forces it, =0 turns it off
-        const char *e = getenv("DM_BC_SOFT");
-        nvn_bc_soft = e ? atoi(e) != 0 : ![g_dev supportsBCTextureCompression];
-        const char *ea = getenv("DM_BC_ASTC"); nvn_bc_astc = ea ? atoi(ea) != 0 : 1;
-        if (nvn_bc_soft) MLOG("BC textures: decoded on the CPU (%s) into %s", e ? "DM_BC_SOFT" : "this GPU has no BC texture support",
-                              nvn_bc_astc ? "ASTC 4x4 (BC1 / 2 / 3 / 7: a quarter of RGBA8's memory) and RG11B10F (BC6H unsigned); DM_BC_ASTC=0 for uncompressed formats" : "uncompressed formats (DM_BC_ASTC=0)");
+        const char *e = getenv("DM_BC_SOFT"), *test = getenv("DM_TEST_NO_BC");
+        nvn_bc_soft = (test && *test && strcmp(test, "0")) ? 1 : e ? atoi(e) != 0 : ![g_dev supportsBCTextureCompression];
+        const char *mode = getenv("DM_NO_BC_ASTC"), *legacy = getenv("DM_BC_ASTC");
+        nvn_bc_astc = mode ? (!strcmp(mode, "0") ? 0 : !strcmp(mode, "bc1") ? 1 : 2) : legacy ? (atoi(legacy) ? 2 : 0) : 2;
+        if (nvn_bc_soft) MLOG("BC textures: CPU fallback for unsupported formats (%s); no-BC ASTC mode %s: %s",
+            test && *test && strcmp(test, "0") ? "DM_TEST_NO_BC" : e ? "DM_BC_SOFT" : "this GPU has no BC texture support",
+            mode ? mode : legacy ? (atoi(legacy) ? "all (legacy DM_BC_ASTC)" : "0 (legacy DM_BC_ASTC)") : "all (default)",
+            nvn_bc_astc == 2 ? "BC1/2/3/7→ASTC 4x4 and BC6H_U→RG11B10F" : nvn_bc_astc == 1 ? "BC1→ASTC 4x4; other BC formats decompressed" : "all BC formats decompressed");
+
     }
     g_q = [g_dev newCommandQueue];
     // A device without Metal 4 (the paravirtualized GPU of a virtual Mac, such as GitHub's macos-26 runner: no residency set, no MTL4CommandQueue) cannot run the NVN layer. The GL and
@@ -2076,7 +2080,8 @@ static void bc3_keep_load_locked(void) {
     const char *keep = getenv("DM_NO_BC_ASTC_KEEP"); if (keep && !strcmp(keep, "0")) return;
     const char *mapenv = getenv("DM_NVN_SHMAP");
     NSString *map = mapenv ? @(mapenv) : exe_rel("../games/" DM_GAME_ID "/shader_map.tsv");
-    NSString *path = map ? [[map stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"bc3_keep_rgba8.tsv"] : nil;
+    const char *table = getenv("DM_NO_BC_ASTC_KEEP_TABLE");
+    NSString *path = table ? @(table) : map ? [[map stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"bc3_keep_rgba8.tsv"] : nil;
     NSString *txt = path ? [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil] : nil;
     if (!txt) return;
     NSArray *lines = [txt componentsSeparatedByString:@"\\n"];
@@ -2090,8 +2095,12 @@ static void bc3_keep_load_locked(void) {
     qsort(g_bc3_keep_keys, g_bc3_keep_n, sizeof *g_bc3_keep_keys, bc3_keep_cmp);
     MLOG("BC3 keep table: %zu packaged textures remain RGBA8%s", g_bc3_keep_n, keep && !strcmp(keep, "0") ? " (ignored)" : "");
 }
+static int bc_astc_enabled(uint32_t fmt, uint32_t *pf, int *kind) {
+    if (!nvn_bc_astc || !nvn_bc_astc_fmt(fmt, pf, kind)) return 0;
+    return nvn_bc_astc == 2 || *kind == 1;
+}
 static int bc3_keep_rgba8(const tex_t *t) {
-    if (!nvn_bc_soft || !nvn_bc_astc || !t || !t->has_layout || !t->mem || !t->L.size || t->d.target == 2 || t->d.samples > 1) return 0;
+    if (!nvn_bc_soft || nvn_bc_astc != 2 || !t || !t->has_layout || !t->mem || !t->L.size || t->d.target == 2 || t->d.samples > 1) return 0;
     uint32_t pf; int kind;
     if (!nvn_bc_astc_fmt((uint32_t)t->d.format, &pf, &kind) || kind != 3) return 0;
     pthread_mutex_lock(&g_bc3_keep_mu);
@@ -2541,7 +2550,7 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
     int obpp = 0; uint32_t bcs = nvn_fmt_bc_soft(t->d.format); if (bcs) bc_soft_target_for_texture(bcs, t->d.target == 2, &obpp);
     int keep_rgba8 = bc3_keep_rgba8(t);
     uint32_t astc_pf = 0; int astc_kind = 0;
-    int astc_bc = bcs && !keep_rgba8 && t->d.target != 2 && t->d.samples <= 1 && nvn_bc_astc_fmt((uint32_t)t->d.format, &astc_pf, &astc_kind);
+    int astc_bc = bcs && !keep_rgba8 && t->d.target != 2 && t->d.samples <= 1 && bc_astc_enabled((uint32_t)t->d.format, &astc_pf, &astc_kind);
     size_t total = 0;
     for (unsigned l = 0; l < d.mipmapLevelCount; l++) {
         uint32_t w = MAX(t->d.width >> l, 1u), h = MAX(t->d.height >> l, 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
@@ -3025,7 +3034,7 @@ static id<MTLTexture> tex_mtl_(const tex_t *ct) {
         if (!d) return nil;
         mt = image_texture(t, d);
         if (!mt) { mt = [g_dev newTextureWithDescriptor:d];
-            if (mt) { res_add(mt); if (!tex_init_fill(t, mt)) { uint32_t apf; int akind; int bc_astc_tex = nvn_bc_soft && !bc3_keep_rgba8(t) && t->d.target != 2 && t->d.samples <= 1 && nvn_bc_astc_fmt((uint32_t)t->d.format, &apf, &akind); tex_zero_fill(mt, bc_astc_tex); } } }
+            if (mt) { res_add(mt); if (!tex_init_fill(t, mt)) { uint32_t apf; int akind; int bc_astc_tex = nvn_bc_soft && !bc3_keep_rgba8(t) && t->d.target != 2 && t->d.samples <= 1 && bc_astc_enabled((uint32_t)t->d.format, &apf, &akind); tex_zero_fill(mt, bc_astc_tex); } } }
         if (!mt) { RED_ONCE(2, "failed to create MTLTexture %ux%u format %#x target %d", t->d.width, t->d.height, t->d.format, t->d.target); return nil; }
     }
     if (g_allocprof > 0) { static int n; if (n++ < 30 || n % 500 == 0) MLOG("new texture (%s) #%d ser=%llu %ux%ux%u format %#x target %d levels %u storage %p", __func__, n, (unsigned long long)t->serial, t->d.width, t->d.height, t->d.depth, t->d.format, t->d.target, t->d.levels, (void *)t->mem); }
