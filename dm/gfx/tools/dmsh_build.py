@@ -74,8 +74,9 @@ def mac_compile(msl, air, lib):   # same interface as ios_metal.compile; the pre
     dmsh_pch.compile(MAC_RUN + METAL_DEPTH, msl, air)
     subprocess.run([*MAC_LINK, air, '-o', lib], check=True)
 
-def record_index(path):   # → (an open descriptor, {a record's key: its bytes' (start, end)}): shader_split.py writes each record's key at +0x08, its bytes from its marker to the next one
 _fd_paths = {}   # original package descriptor -> path; workers reopen their own descriptor after fork
+
+def record_index(path):   # → (an open descriptor, {a record's key: its bytes' (start, end)}): shader_split.py writes each record's key at +0x08, its bytes from its marker to the next one
     # Scanned through a read-only mapping that is closed again, so no package stays in this process. Pokopia's ps_rdb.bin (4.25 GB) read and cut into its 105,118
     # records left the process at 8.7 GB, and each fork (every spirv-cross and Metal compile) then took 75 ms instead of 3 with the GIL held: one shader worker at a time (GitHub issue #1036)
     fd = os.open(path, os.O_RDONLY); _fd_paths[fd] = path; n = os.fstat(fd).st_size
