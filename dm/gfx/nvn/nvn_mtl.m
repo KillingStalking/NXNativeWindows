@@ -2085,7 +2085,7 @@ static void bc3_keep_load_locked(void) {
     NSString *path = table ? @(table) : map ? [[map stringByDeletingLastPathComponent] stringByAppendingPathComponent:@"bc3_keep_rgba8.tsv"] : nil;
     NSString *txt = path ? [NSString stringWithContentsOfFile:path encoding:NSUTF8StringEncoding error:nil] : nil;
     if (!txt) return;
-    NSArray *lines = [txt componentsSeparatedByString:@"\\n"];
+    NSArray *lines = [txt componentsSeparatedByString:@"\n"];
     g_bc3_keep_keys = calloc(lines.count + 1, sizeof *g_bc3_keep_keys);
     if (!g_bc3_keep_keys) return;
     for (NSString *line in lines) {
