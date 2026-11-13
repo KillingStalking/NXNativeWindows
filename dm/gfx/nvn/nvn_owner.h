@@ -125,6 +125,7 @@ void own_each_locked(void (^fn)(uint64_t serial, id o, int ghost));
 // ---- What the replay layer provides (nvn_mtl.m). Called with g_smu held
 void own_hook_drop(id o, int keep_resident);   // an object the owner lets go: released after the submission in flight (keep_resident: it stays in the residency set, as something else holds it)
 uint64_t own_hook_submission(void);            // the submission being encoded (g_fence + 1): a lookup's mark, which ALIAS_IDLE counts from
+uint64_t own_hook_frame(void);                 // the frame being replayed (present count), for age-based ghost eviction
 
 // ---- Queries and seams for the tests (t_serial_owner links the owner alone; the replay layer does not call these). Caller holds g_smu
 const void *own_live_ref_locked(uint64_t k);
