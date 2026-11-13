@@ -75,9 +75,10 @@ def mac_compile(msl, air, lib):   # same interface as ios_metal.compile; the pre
     subprocess.run([*MAC_LINK, air, '-o', lib], check=True)
 
 def record_index(path):   # → (an open descriptor, {a record's key: its bytes' (start, end)}): shader_split.py writes each record's key at +0x08, its bytes from its marker to the next one
+_fd_paths = {}   # original package descriptor -> path; workers reopen their own descriptor after fork
     # Scanned through a read-only mapping that is closed again, so no package stays in this process. Pokopia's ps_rdb.bin (4.25 GB) read and cut into its 105,118
     # records left the process at 8.7 GB, and each fork (every spirv-cross and Metal compile) then took 75 ms instead of 3 with the GIL held: one shader worker at a time (GitHub issue #1036)
-    fd = os.open(path, os.O_RDONLY); n = os.fstat(fd).st_size
+    fd = os.open(path, os.O_RDONLY); _fd_paths[fd] = path; n = os.fstat(fd).st_size
     if not n: return fd, {}
     with mmap.mmap(fd, n, access=mmap.ACCESS_READ) as m:
         # Do not search for the next marker in arbitrary shader bytes: BTCDBTCD
@@ -104,6 +105,8 @@ def record_index(path):   # → (an open descriptor, {a record's key: its bytes'
 # Both APIs may return a short read, so keep reading until the requested span
 # is complete; shader records must never be silently truncated.
 _pread_lock = threading.Lock()
+_read_fds = {}   # (process id, package path) -> process-private descriptor; forked workers must not share file offsets
+
 def read_at(fd, size, offset):
     chunks = []
     done = 0
@@ -113,10 +116,19 @@ def read_at(fd, size, offset):
             if not chunk: break
             chunks.append(chunk); done += len(chunk)
     else:
+        # A descriptor inherited through fork shares its underlying file position
+        # with the parent. A Python lock is process-local, so it cannot serialize
+        # seek+read across workers. Reopen once per process and package instead.
         with _pread_lock:
-            os.lseek(fd, offset, os.SEEK_SET)
+            path = _fd_paths[fd]
+            key = (os.getpid(), path)
+            read_fd = _read_fds.get(key)
+            if read_fd is None:
+                read_fd = os.open(path, os.O_RDONLY)
+                _read_fds[key] = read_fd
+            os.lseek(read_fd, offset, os.SEEK_SET)
             while done < size:
-                chunk = os.read(fd, size - done)
+                chunk = os.read(read_fd, size - done)
                 if not chunk: break
                 chunks.append(chunk); done += len(chunk)
     data = b''.join(chunks)
