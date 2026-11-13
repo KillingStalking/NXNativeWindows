@@ -508,7 +508,7 @@ void mtl_init(void) {
         if (nvn_bc_soft) MLOG("BC textures: CPU fallback for unsupported formats (%s); no-BC ASTC mode %s: %s",
             test && *test && strcmp(test, "0") ? "DM_TEST_NO_BC" : e ? "DM_BC_SOFT" : "this GPU has no BC texture support",
             mode ? mode : legacy ? (atoi(legacy) ? "all (legacy DM_BC_ASTC)" : "0 (legacy DM_BC_ASTC)") : "all (default)",
-            nvn_bc_astc == 2 ? "BC1/2/3/7→ASTC 4x4 and BC6H_U→RG11B10F" : nvn_bc_astc == 1 ? "BC1→ASTC 4x4; other BC formats decompressed" : "all BC formats decompressed");
+            nvn_bc_astc == 2 ? "BC1/2/3→ASTC 4x4; BC7 uses the pixel decoder; BC6H_U→RG11B10F" : nvn_bc_astc == 1 ? "BC1→ASTC 4x4; other BC formats decompressed" : "all BC formats decompressed");
 
     }
     g_q = [g_dev newCommandQueue];

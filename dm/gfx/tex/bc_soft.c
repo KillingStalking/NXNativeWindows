@@ -12,7 +12,7 @@
 #endif
 
 int nvn_bc_soft;
-int nvn_bc_astc = 2;   // 0 = all BC decompressed; 1 = BC1→ASTC only; 2 = BC1/2/3/7→ASTC and BC6H_U→RG11B10F
+int nvn_bc_astc = 2;   // 0 = all BC decompressed; 1 = BC1→ASTC only; 2 = BC1/2/3→ASTC and BC6H_U→RG11B10F
 
 enum { BC1 = 130, BC1_S = 131, BC2 = 132, BC2_S = 133, BC3 = 134, BC3_S = 135, BC4_U = 140, BC4_S = 141, BC5_U = 142, BC5_S = 143, BC6H_S = 150, BC6H_U = 151, BC7 = 152, BC7_S = 153 };
 enum { R8U = 10, R8S = 12, RG8U = 30, RG8S = 32, RGBA8 = 70, RGBA8_S = 71, RG11B10F = 92, RGBA16F = 115, ASTC4_S = 186, ASTC4 = 204 };
