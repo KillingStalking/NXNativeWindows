@@ -24,8 +24,10 @@ uint32_t bc_soft_target(uint32_t pf, int *bpp) {
         // bc_soft_rows gives the rows: one per block row
         case BC1: o = nvn_bc_astc ? ASTC4 : RGBA8; b = 4; break;
         case BC1_S: o = nvn_bc_astc ? ASTC4_S : RGBA8_S; b = 4; break;
-        case BC2: case BC3: case BC7: o = nvn_bc_astc == 2 ? ASTC4 : RGBA8; b = 4; break;
-        case BC2_S: case BC3_S: case BC7_S: o = nvn_bc_astc == 2 ? ASTC4_S : RGBA8_S; b = 4; break;
+        case BC2: case BC3: o = nvn_bc_astc == 2 ? ASTC4 : RGBA8; b = 4; break;
+        case BC2_S: case BC3_S: o = nvn_bc_astc == 2 ? ASTC4_S : RGBA8_S; b = 4; break;
+        case BC7: o = RGBA8; b = 4; break;
+        case BC7_S: o = RGBA8_S; b = 4; break;
         case BC4_U: o = R8U; b = 1; break;
         case BC4_S: o = R8S; b = 1; break;
         case BC5_U: o = RG8U; b = 2; break;
@@ -349,7 +351,7 @@ static void block_out(uint32_t pf, const uint8_t *p, uint8_t *dst, size_t dst_pi
             memcpy(dst, out, 16);
             return;
         }
-        // BC7 remains on the existing software ASTC encoder path.
+        // BC7 is kept on the pixel decoder path; only BC1–BC3 use the compact ASTC transcoder.
         uint8_t px[64]; bc_soft_block(pf, p, px, 16); astc_encode(px, dst); return;
     }
     if (o == RG11B10F) {
