@@ -2281,6 +2281,7 @@ typedef struct {
     uint8_t fill;
 } up_blit;
 static up_blit *g_up_blits; static int g_nup_blits, g_up_blitcap;
+static uint64_t g_up_ebar;   // intra-encoder upload ordering barriers (t_up_order)
 typedef struct { __unsafe_unretained id<MTLBuffer> src, params; size_t poff; uint32_t nbx, nby; } up_ast;
 static up_ast *g_up_asts; static int g_nup_asts, g_up_astcap;
 static NSMutableArray *g_up_texs, *g_up_views;   // Targets and temporary integer-write views kept through their upload
@@ -2324,7 +2325,7 @@ static void up_flush(void) {
     if (b) [b barrierAfterQueueStages:MTLStageAll beforeStages:MTLStageAll visibilityOptions:resource_vis()];
     int nfill = 0;
     for (int i = 0; b && i < g_nup_blits; i++) { up_blit *x = &g_up_blits[i]; if (!x->fill) continue; nfill++; enc_b_copy_buffer_texture(b, x->src, x->off, x->row, x->image, x->size, x->dst, x->slice, x->level, MTLOriginMake(0, 0, 0)); }
-    if (b && nfill && g_nup_asts) [b barrierAfterEncoderStages:MTLStageBlit beforeEncoderStages:MTLStageDispatch | MTLStageBlit visibilityOptions:MTL4VisibilityOptionDevice];
+    if (b && nfill && (g_nup_asts || nfill < g_nup_blits)) { [b barrierAfterEncoderStages:MTLStageBlit beforeEncoderStages:MTLStageDispatch | MTLStageBlit visibilityOptions:MTL4VisibilityOptionDevice]; g_up_ebar++; }
     if (b && g_nup_asts) {
         [b setArgumentTable:g_up_ct]; [b setComputePipelineState:bca_pso()];
         for (int i = 0; i < g_nup_asts; i++) { up_ast *x = &g_up_asts[i];
@@ -2333,7 +2334,7 @@ static void up_flush(void) {
             [g_up_ct setAddress:x->src.gpuAddress atIndex:2];
             [b dispatchThreadgroups:MTLSizeMake((x->nbx + 7) / 8, (x->nby + 7) / 8, 1) threadsPerThreadgroup:MTLSizeMake(8, 8, 1)];
         }
-        [b barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageBlit visibilityOptions:MTL4VisibilityOptionDevice];
+        [b barrierAfterEncoderStages:MTLStageDispatch beforeEncoderStages:MTLStageBlit visibilityOptions:MTL4VisibilityOptionDevice]; g_up_ebar++;
     }
     for (int i = 0; b && i < g_nup_blits; i++) {
         up_blit *x = &g_up_blits[i]; if (x->fill) continue;
