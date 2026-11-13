@@ -1584,6 +1584,7 @@ uint64_t mtl_sub_commit(void) {
     if (g_blit) { enc_b_end(g_blit); g_blit = nil; }
     up_flush();
     g_cut_copy = 0;
+    pthread_mutex_lock(&g_smu); ghost_trim_locked(GHOST_TRIM); pthread_mutex_unlock(&g_smu);   // idle finalized textures past the cache limit retire behind this submission's fence
     treg_finish_submission();   // Late descriptor views retire behind this submission's fence.
     uint64_t fence = ++g_fence;
     gw_commit(fence);
@@ -1815,7 +1816,43 @@ static void serial_del(uint64_t k) { pthread_mutex_lock(&g_smu); id old = hm_get
 // so a record replayed again soon still finds its texture
 enum { NGHOST = 512 };
 static nvn_hmap g_tex_live = {.klen = 8};   // serial → (void *)1, under g_smu
-static nvn_hmap g_ghost = {.klen = 8}; static uint64_t g_ghost_ring[NGHOST]; static unsigned g_ghost_next; static uint64_t g_ghost_puts;
+static nvn_hmap g_ghost = {.klen = 8}; static uint64_t g_ghost_puts;
+enum { GHOST_IDLE = 16, GHOST_IDLE_SUBS = 1024, GHOST_TRIM = 32 };
+static unsigned g_ghost_limit = NGHOST;
+typedef struct ghost_use { struct ghost_use *prev, *next; uint64_t serial, frame, sub; } ghost_use;
+static nvn_hmap g_ghost_use = {.klen = 8};
+static ghost_use *g_ghost_lru, *g_ghost_mru;
+static void ghost_use_unlink(ghost_use *u) {
+    if (u->prev) u->prev->next = u->next; else g_ghost_lru = u->next;
+    if (u->next) u->next->prev = u->prev; else g_ghost_mru = u->prev;
+    u->prev = u->next = NULL;
+}
+static void ghost_used(uint64_t k) {
+    ghost_use *u = nvn_hm_get(&g_ghost_use, &k);
+    if (!u) { u = calloc(1, sizeof *u); if (!u) MDIE("ghost use allocation failed"); u->serial = k; nvn_hm_put(&g_ghost_use, &k, u); }
+    else if (u != g_ghost_mru) ghost_use_unlink(u);
+    u->frame = atomic_load(&g_cur_frame); u->sub = g_fence + 1;
+    if (u != g_ghost_mru) { u->prev = g_ghost_mru; if (g_ghost_mru) g_ghost_mru->next = u; else g_ghost_lru = u; g_ghost_mru = u; }
+}
+static void ghost_del_locked(uint64_t k) {
+    ghost_use *u = nvn_hm_del(&g_ghost_use, &k); if (u) { ghost_use_unlink(u); free(u); }
+    id old = hm_get_id(&g_ghost, &k); if (!old) return;
+    obj_drop(old); hm_del_id(&g_ghost, &k); g_ser_gen++;
+}
+static void ghost_trim_locked(unsigned budget) {
+    uint64_t frame = atomic_load(&g_cur_frame), sub = g_fence + 1;
+    for (; budget && g_ghost.n > g_ghost_limit && g_ghost_lru; budget--) {
+        const ghost_use *u = g_ghost_lru;
+        if (frame - u->frame < GHOST_IDLE && sub - u->sub < GHOST_IDLE_SUBS) break;
+        ghost_del_locked(u->serial);
+    }
+}
+static unsigned ghost_enforce_locked(void) {
+    unsigned dropped = 0;
+    while (g_ghost.n > g_ghost_limit && g_ghost_lru) { ghost_del_locked(g_ghost_lru->serial); dropped++; }
+    return dropped;
+}
+static void ghost_limit_set_locked(unsigned limit) { g_ghost_limit = limit > NGHOST ? NGHOST : limit; }
 void mtl_tex_init(const tex_t *t) {
     if (!t->serial) return;
     tex_t *desc = image_shape(t) ? malloc(sizeof *desc) : NULL; if (desc) *desc = *t;
@@ -1826,19 +1863,18 @@ void mtl_tex_init(const tex_t *t) {
 }
 static void obj_drop(id o) { if (alias_has(o)) defer_obj_unref(o); else defer_obj_release(o); }   // caller holds g_smu
 static __unsafe_unretained id tex_get(uint64_t k) {
-    pthread_mutex_lock(&g_smu); __unsafe_unretained id o = hm_get_id(&g_by_serial, &k); if (!o && g_ghost.n) o = hm_get_id(&g_ghost, &k); pthread_mutex_unlock(&g_smu); return o;
+    pthread_mutex_lock(&g_smu); __unsafe_unretained id o = hm_get_id(&g_by_serial, &k);
+    if (!o && g_ghost.n) { o = hm_get_id(&g_ghost, &k); if (o) ghost_used(k); }
+    pthread_mutex_unlock(&g_smu); return o;
 }
 static void tex_put(uint64_t k, id o) {   // serials from 2^62 up are external textures (mtl_ext_tex), never initialized by the game
     pthread_mutex_lock(&g_smu);
     nvn_hmap *m = k >= (1ull << 62) || nvn_hm_get(&g_tex_live, &k) ? &g_by_serial : &g_ghost;
     id old = hm_get_id(m, &k);
     if (old) obj_drop(old);
-    else if (m == &g_ghost) {
-        uint64_t *slot = &g_ghost_ring[g_ghost_next++ % NGHOST];
-        if (*slot) { id ev = hm_get_id(&g_ghost, slot); if (ev) obj_drop(ev); hm_del_id(&g_ghost, slot); }
-        *slot = k; g_ghost_puts++;
-    }
+    else if (m == &g_ghost) g_ghost_puts++;
     hm_put_id(m, &k, o); g_ser_gen++;
+    if (m == &g_ghost) { ghost_used(k); ghost_trim_locked(2); if (g_ghost_limit < NGHOST) ghost_enforce_locked(); }
     pthread_mutex_unlock(&g_smu);
 }
 // Host record of a packaged texture: the current MTLTexture, the upload stamp, and the global write generation at the last check
