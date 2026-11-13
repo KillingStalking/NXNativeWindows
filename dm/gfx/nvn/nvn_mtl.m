@@ -2115,7 +2115,12 @@ static int bc3_keep_rgba8(const tex_t *t) {
         int hit = bsearch(&key, g_bc3_keep_keys, g_bc3_keep_n, sizeof *g_bc3_keep_keys, bc3_keep_cmp) != NULL;
         decision = hit ? 2 : 1;
         nvn_hm_put(&g_bc3_keep_dec, &serial, (void *)decision);
-        if (getenv("DM_NO_BC_ASTC_KEYLOG")) MLOG("BC3 key %016llx serial %llu: %s", (unsigned long long)key, (unsigned long long)serial, hit ? "keep RGBA8" : "ASTC 4x4");
+        if (getenv("DM_NO_BC_ASTC_KEYLOG")) {
+            const uint8_t *p = t->mem;
+            MLOG("BC3 key %016llx serial %llu format %#x %ux%u levels %u storage %llu bytes first %02x%02x%02x%02x%02x%02x%02x%02x: %s",
+                (unsigned long long)key, (unsigned long long)serial, t->d.format, t->d.width, t->d.height, t->d.levels,
+                (unsigned long long)t->L.size, p[0], p[1], p[2], p[3], p[4], p[5], p[6], p[7], hit ? "keep RGBA8" : "ASTC 4x4");
+        }
     }
     pthread_mutex_unlock(&g_bc3_keep_mu);
     return decision == 2;
