@@ -1884,6 +1884,12 @@ static unsigned ghost_enforce_locked(void) {
 }
 static void ghost_limit_set_locked(unsigned limit) { g_ghost_limit = limit > NGHOST ? NGHOST : limit; }
 
+static unsigned pkg_spares_trim_locked(uint64_t *bytes);
+static nvn_hmap g_vc;
+static os_unfair_lock g_rmu;
+static void vc_set_free(void *p);
+static __strong id<MTLBuffer> g_up_slot_blk[3], g_up_slot_over[3];
+static id<MTLBuffer> g_up_block;
 static _Atomic int g_mp_req, g_mp_reason;
 static int g_mp_pressured, g_mp_last_tier; static uint64_t g_mp_last_frame, g_mp_hold_until; static long g_mp_fake = -2;
 enum { MP_SRC_WARN = 1, MP_SRC_CRIT = 2, MP_UI = 3, MP_WATER = 4, MP_TEST = 5 };
@@ -1944,18 +1950,26 @@ static void mem_trim_if_requested(void) {
     int tier = atomic_exchange(&g_mp_req, 0); if (!tier) return;
     int reason = atomic_load(&g_mp_reason); uint64_t frame = atomic_load(&g_cur_frame);
     long h = mp_headroom_mb();
-    uint64_t shared_bytes = 0;
+    uint64_t shared_bytes = 0, spare_bytes = 0, staging_bytes = 0;
     pthread_mutex_lock(&g_smu);
     unsigned before = g_ghost.n;
     ghost_limit_set_locked(64);
     unsigned dropped = ghost_enforce_locked();
     unsigned after = g_ghost.n;
     unsigned shared = alias_evict_idle_locked(tier >= 2 ? 16 : 64, &shared_bytes);
+    unsigned spares = pkg_spares_trim_locked(&spare_bytes);
     pthread_mutex_unlock(&g_smu);
+    unsigned views;
+    os_unfair_lock_lock(&g_rmu); views = g_vc.n; nvn_hm_clear(&g_vc, vc_set_free); os_unfair_lock_unlock(&g_rmu);
+    unsigned staging = 0;
+    if (tier >= 2 && !g_up_block) for (int i = 0; i < 3; i++) {
+        if (g_up_slot_blk[i]) { id<MTLBuffer> b = g_up_slot_blk[i]; staging_bytes += b.length; staging++; g_up_slot_blk[i] = nil; defer_obj_release(b); }
+        if (g_up_slot_over[i]) { id<MTLBuffer> b = g_up_slot_over[i]; staging_bytes += b.length; staging++; g_up_slot_over[i] = nil; defer_obj_release(b); }
+    }
     g_mp_pressured = 1; g_mp_last_tier = tier; g_mp_last_frame = frame;
     static const char *const why[] = {"", "system warning", "system critical", "app memory warning", "headroom watermark", "test switch"};
-    MLOG("memory pressure: tier %d (%s, frame %llu, headroom %ld MB): finalized-texture cache %u -> %u (%u evicted), unreferenced shared textures %u (%llu MB); releases are deferred to the GPU fence",
-         tier, reason >= 1 && reason <= 5 ? why[reason] : "unknown", (unsigned long long)frame, h, before, after, dropped, shared, (unsigned long long)(shared_bytes >> 20));
+    MLOG("memory pressure: tier %d (%s, frame %llu, headroom %ld MB): ghost cache %u -> %u (%u evicted), shared textures %u (%llu MB), package spares %u (%llu MB), views %u, staging blocks %u (%llu MB); releases are deferred to the GPU fence",
+         tier, reason >= 1 && reason <= 5 ? why[reason] : "unknown", (unsigned long long)frame, h, before, after, dropped, shared, (unsigned long long)(shared_bytes >> 20), spares, (unsigned long long)(spare_bytes >> 20), views, staging, (unsigned long long)(staging_bytes >> 20));
 }
 
 void mtl_tex_init(const tex_t *t) {
@@ -1991,6 +2005,18 @@ static void tex_put(uint64_t k, id o) {   // serials from 2^62 up are external t
 @implementation NvPkg
 - (void)dealloc { res_remove(tex); if (spare) res_remove(spare); free(edge[0]); free(edge[1]); }
 @end
+static unsigned pkg_spares_trim_locked(uint64_t *bytes) {
+    unsigned n = 0; uint64_t total = 0;
+    for (uint32_t i = 0; i < g_by_serial.cap; i++) {
+        id ob = g_by_serial.vals[i] ? (__bridge id)g_by_serial.vals[i] : nil;
+        if (![ob isKindOfClass:NvPkg.class]) continue;
+        NvPkg *pk = (NvPkg *)ob;
+        if (!pk->spare) continue;
+        id<MTLTexture> spare = pk->spare; total += spare.allocatedSize; pk->spare = nil; defer_obj_release(spare); n++;
+    }
+    if (bytes) *bytes = total;
+    return n;
+}
 static uint64_t g_pkg_uploads, g_pkg_reuploads, g_pkg_miss, g_pkg_edge_skips;
 static uint64_t g_pfv_upgrades;
 // DM_NVN_DIRTYCHECK=1 (diagnostic, compared against ground truth): fully hash the pool content on every use; changed but not detected by dirty-page tracking = a missed detection
