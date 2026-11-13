@@ -395,3 +395,20 @@ int bc_soft_decode_for_texture(uint32_t pf, int is_3d, const uint8_t *src, size_
 int bc_soft_decode(uint32_t pf, const uint8_t *src, size_t src_pitch, uint32_t w, uint32_t h, uint8_t *dst, size_t dst_pitch) {
     return bc_soft_decode_for_texture(pf, 0, src, src_pitch, w, h, dst, dst_pitch);
 }
+int bc_soft_decode_pixels_for_texture(uint32_t pf, int is_3d, const uint8_t *src, size_t src_pitch, uint32_t w, uint32_t h, uint8_t *dst, size_t dst_pitch) {
+    int bpp; if (!bc_soft_target_for_texture(pf, is_3d, &bpp)) return -1;
+    size_t bsz = (pf == BC1 || pf == BC1_S || pf == BC4_U || pf == BC4_S) ? 8 : 16;
+    uint32_t bw = (w + 3) / 4, bh = (h + 3) / 4;
+#ifdef __APPLE__
+    if ((uint64_t)bw * bh >= 1024) {
+        uint32_t bands = (bh + 7) / 8;
+        dispatch_apply(bands, dispatch_get_global_queue(QOS_CLASS_USER_INITIATED, 0), ^(size_t i) {
+            uint32_t a = (uint32_t)i * 8, b = a + 8 < bh ? a + 8 : bh;
+            decode_rows(pf, src, src_pitch, bw, a, b, dst, dst_pitch, bpp, bsz, 1);
+        });
+        return 0;
+    }
+#endif
+    decode_rows(pf, src, src_pitch, bw, 0, bh, dst, dst_pitch, bpp, bsz, 1);
+    return 0;
+}

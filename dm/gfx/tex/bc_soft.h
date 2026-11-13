@@ -21,6 +21,8 @@ extern int nvn_bc_astc;   // 1 (the default) = BC1 / 2 / 3 / 7 become ASTC 4x4 a
 // Decode a w × h region of BC blocks (src: rows of 4 × 4 blocks, src_pitch bytes from one block row to the next) into dst (dst_pitch bytes per pixel row).
 // dst must hold whole blocks: ceil(w / 4) * 4 pixels per row and ceil(h / 4) * 4 rows. Returns 0, or -1 when mtl_pf is no BC format
 int bc_soft_decode(uint32_t mtl_pf, const uint8_t *src, size_t src_pitch, uint32_t w, uint32_t h, uint8_t *dst, size_t dst_pitch);
+// Decode to RGBA8 / R8 / RG8 pixels even when the default BC1–3 target is ASTC (per-texture BC3 keep fallback).
+int bc_soft_decode_pixels_for_texture(uint32_t mtl_pf, int is_3d, const uint8_t *src, size_t src_pitch, uint32_t w, uint32_t h, uint8_t *dst, size_t dst_pitch);
 int bc_soft_decode_for_texture(uint32_t mtl_pf, int is_3d, const uint8_t *src, size_t src_pitch, uint32_t w, uint32_t h, uint8_t *dst, size_t dst_pitch);
 
 // One 4 × 4 block into 16 pixels (row-major, bytes_per_pixel each), for tests
