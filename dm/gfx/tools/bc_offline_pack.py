@@ -234,8 +234,8 @@ def convert_entry(entry: dict, base: Path, out_dir: Path, decode) -> dict:
         )
         if rc:
             raise RuntimeError(f"{entry['id']}: NVN deswizzle/transcoder returned {rc}")
-        dst_pitch_value = int(getattr(dst_pitch, "value"))
-        dst_size_value = int(getattr(dst_size, "value"))
+        dst_pitch_value = int(dst_pitch.value)  # type: ignore[attr-defined]
+        dst_size_value = int(dst_size.value)  # type: ignore[attr-defined]
         if dst_pitch_value != dst_pitch_expected or dst_size_value != dst_size_expected:
             raise RuntimeError(f"{entry['id']}: unexpected ASTC layout from native transcoder")
         converted = dst_buf.raw[:dst_size_value]
