@@ -176,7 +176,7 @@ def parse_bntx(buf, base=0, label="<memory>"):
             "mip_offsets": [p - mip_ptrs[0] for p in mip_ptrs],
             "data_offset": data_start, "image_size": image_size,
             "nvn": nvn, "runtime_only": format_name in RUNTIME_ONLY,
-            "eligible": (format_name not in RUNTIME_ONLY and dimension in (0, 1, 3, 4, 5, 8)
+            "eligible": (dimension in (0, 1, 3, 4, 5, 8)
                          and tile_mode == 0 and not (flags & 0x06) and samples <= 1),
         })
     return {"base": base, "size": file_size, "textures": textures}
@@ -254,30 +254,24 @@ def scan(root, out_dir):
                                 skipped_layouts += 1
                                 continue
                             stem = _safe(f"{Path(file_path).name}_{pos:x}_{tex['index']}_{tex['name']}")
-                            source_name = f"{stem}.bin"
-                            source_path = source_dir / source_name
-                            start = tex["data_offset"]
-                            source_path.write_bytes(bytes(mapped[start:start + tex["image_size"]]))
-                            common = {
-                                "source": f"sources/{source_name}",
-                                "offset": 0,
-                                "storage_size": tex["image_size"],
-                                "mip_offsets": tex["mip_offsets"],
-                                "nvn": tex["nvn"],
-                            }
+                            common = {"mip_offsets": tex["mip_offsets"], "nvn": tex["nvn"]}
+                            if not tex["runtime_only"]:
+                                source_name = f"{stem}.bin"
+                                source_path = source_dir / source_name
+                                start = tex["data_offset"]
+                                source_path.write_bytes(bytes(mapped[start:start + tex["image_size"]]))
+                                common.update({
+                                    "source": f"sources/{source_name}",
+                                    "offset": 0,
+                                    "storage_size": tex["image_size"],
+                                })
                             for mip in range(tex["nvn"]["levels"]):
                                 for layer in range(tex["layers"]):
                                     ident = f"{stem}_m{mip}_l{layer}"
-                                    if tex["runtime_only"]:
-                                        manifest_entries.append({
-                                            "id": ident, "format": tex["format"],
-                                            "mip": mip, "layer": layer,
-                                        })
-                                    else:
-                                        manifest_entries.append({
-                                            "id": ident, "mip": mip, "layer": layer,
-                                            **common,
-                                        })
+                                    manifest_entries.append({
+                                        "id": ident, "mip": mip, "layer": layer,
+                                        **common,
+                                    })
                         pos += parsed["size"]
                 finally:
                     mapped.close()
