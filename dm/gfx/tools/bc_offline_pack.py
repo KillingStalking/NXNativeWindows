@@ -302,11 +302,38 @@ def convert_entry(entry: dict, base: Path, out_dir: Path, decode) -> dict:
         **({"channel_mapping": entry["channel_mapping"]} if "channel_mapping" in entry else {}),
     }
 
+
+def bundle_results(results: list[dict], out_dir: Path) -> Path:
+    """Concatenate converted subresources into one seekable sidecar blob."""
+    pack_path = out_dir / "bc_offline_pack.bin"
+    tmp_path = pack_path.with_suffix(".bin.tmp")
+    try:
+        with tmp_path.open("wb") as pack:
+            for item in results:
+                if item.get("skipped", False):
+                    continue
+                source = out_dir / item["output"]
+                data = source.read_bytes()
+                if len(data) != item["size"] or sha256(data) != item["output_sha256"]:
+                    raise ValueError(f"{item['id']}: ASTC output changed before pack assembly")
+                offset = pack.tell()
+                pack.write(data)
+                item["pack_offset"] = offset
+                item["pack_size"] = len(data)
+                item["pack_file"] = pack_path.name
+                source.unlink()
+        os.replace(tmp_path, pack_path)
+    except BaseException:
+        if tmp_path.exists():
+            tmp_path.unlink()
+        raise
+    return pack_path
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--manifest", required=True, type=Path, help="JSON manifest of NVN block-linear or linear BC subresources")
     ap.add_argument("--out", required=True, type=Path, help="sidecar pack output directory")
-    ap.add_argument("--clang", default=os.environ.get("CLANG") or shutil.which("clang"), help="Windows clang executable")
+    ap.add_argument("--clang", default=os.environ.get("CLANG") or shutil.which("clang"), help="clang executable")
     ap.add_argument("--decoder-dll", type=Path, help="use an already-built bc_offline.dll")
     args = ap.parse_args()
     manifest_path = args.manifest.resolve()
@@ -334,9 +361,11 @@ def main() -> int:
             decoder_path = build_decoder(args.clang, Path(td))
             decode = load_decoder(decoder_path)
             results = [convert_entry(e, manifest_path.parent, out_dir, decode) for e in manifest["textures"]]
+    pack_path = bundle_results(results, out_dir)
     index = {
         "version": 1,
         "texture_format": "ASTC_4x4",
+        "pack_file": pack_path.name,
         "source_manifest": manifest_path.name,
         "textures": results,
     }
