@@ -69,7 +69,7 @@ def build_decoder(clang: str, temp: Path) -> Path:
             "-fuse-ld=lld", "-Wl,/NOENTRY",
             "-Wl,/EXPORT:bc_offline_texture",
             "-Wl,/EXPORT:bc_offline_texture_level",
-            "-Wl,/EXPORT:bc_offline_level_offset",
+            "-Wl,/EXPORT:bc_offline_level_offset", "-Wl,/EXPORT:bc_offline_texture_key",
             f"-I{TEX}", f"-I{ROOT / 'dm' / 'gfx' / 'nvn'}", "-o", str(dll),
             str(TEX / "bc_soft.c"), str(TEX / "nvn_bc2astc.c"),
             str(TEX / "nvn_deswizzle.c"), str(TEX / "nvn_fmt_mtl.c"),
@@ -120,6 +120,14 @@ def load_decoder(path: Path):
     ]
     level_offset.restype = ctypes.c_uint64
     fn.level_offset = level_offset
+    texture_key = lib.bc_offline_texture_key
+    texture_key.argtypes = [
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
+        ctypes.c_uint32, ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t,
+    ]
+    texture_key.restype = ctypes.c_uint64
+    fn.texture_key = texture_key
     fn._bc_library = lib
     return fn
 
@@ -220,7 +228,14 @@ def convert_entry(entry: dict, base: Path, out_dir: Path, decode) -> dict:
         if dst_pitch.value != dst_pitch_expected or dst_size.value != dst_size_expected:
             raise RuntimeError(f"{entry['id']}: unexpected ASTC layout from native transcoder")
         converted = dst_buf.raw[:dst_size.value]
+        key = int(decode.texture_key(
+            target, nvn_format, flags, samples, width, height, depth, levels,
+            stride, pkg_layout, src_buf, len(raw),
+        ))
+        if key == 0xFFFFFFFFFFFFFFFF:
+            raise ValueError(f"{entry['id']}: NVN layout size exceeds the supplied source allocation")
         metadata = {
+            "texture_key": f"{key:016x}",
             "nvn_target": target,
             "nvn_format": f"0x{nvn_format:02x}",
             "nvn_flags": flags,
