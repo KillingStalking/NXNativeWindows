@@ -75,8 +75,8 @@ class OfflineBC(unittest.TestCase):
                     ctypes.byref(dst_pitch), ctypes.byref(dst_size),
                 )
                 self.assertEqual(rc, 0)
-                self.assertEqual(dst_pitch.value, 16  # type: ignore[attr-defined])
-                self.assertEqual(dst_size.value, 16  # type: ignore[attr-defined])
+                self.assertEqual(dst_pitch.value, 16)  # type: ignore[attr-defined]
+                self.assertEqual(dst_size.value, 16)  # type: ignore[attr-defined]
                 self.assertNotEqual(dst.raw, bytes(16))
 
     def test_runtime_only_formats_are_skipped_without_reading_source(self):
