@@ -28,6 +28,20 @@ static void front_ios_audio_watch(void);
 static UILabel *front_ios_fps_label(void);
 static int g_hud;   // DM_METAL_HUD=1: show the compact stats line; mode 2 uses Apple's native full HUD
 
+static NSDictionary *front_metal_hud_properties(void) {
+    const char *value = getenv("DM_METAL_HUD");
+    int mode = value ? atoi(value) : 0;
+    if (mode >= 2) return @{
+        @"mode": @"default",
+        @"MTL_HUD_ELEMENTS": @"device,rosetta,layersize,layerscale,memory,fps,frameinterval,gputime,thermal,frameintervalgraph,presentdelay,frameintervalhistogram,metalcpu,gputimeline,shaders,framenumber,disk,fpsgraph,toplabeledcommandbuffers,toplabeledencoders",
+        @"MTL_HUD_ENCODER_TIMING_ENABLED": @"1",
+        @"MTL_HUD_SHOW_METRICS_RANGE": @"1",
+        @"MTL_HUD_ALIGNMENT": @"topright"
+    };
+    if (mode == 1) return @{@"mode": @"default"};
+    return nil;
+}
+
 @interface DmGameView : UIView
 @end
 @implementation DmGameView
@@ -35,6 +49,10 @@ static int g_hud;   // DM_METAL_HUD=1: show the compact stats line; mode 2 uses 
 - (instancetype)initWithFrame:(CGRect)f {
     if ((self = [super initWithFrame:f])) {
         CAMetalLayer *l = (CAMetalLayer *)self.layer;
+        // Apple reads the developer HUD configuration as the layer's Metal device is created.
+        // Set it first; applying it after MTLCreateSystemDefaultDevice() is too late.
+        NSDictionary *hud = front_metal_hud_properties();
+        if (hud) l.developerHUDProperties = hud;
         l.device = MTLCreateSystemDefaultDevice(); l.pixelFormat = MTLPixelFormatBGRA8Unorm;
         l.contentsScale = UIScreen.mainScreen.nativeScale; l.framebufferOnly = NO; l.opaque = YES;
         self.backgroundColor = UIColor.blackColor;
@@ -79,21 +97,10 @@ static void launcher_done(void) { [g_root startGame]; }
     g_layer = (CAMetalLayer *)self.game.layer;
     const char *hud_env = getenv("DM_METAL_HUD");
     int hud_mode = hud_env ? atoi(hud_env) : 0;   // 0 off, 1 compact, 2 full Apple Metal Performance HUD
-    if (hud_mode > 0) {
-        if (hud_mode >= 2) {
-            g_layer.developerHUDProperties = @{
-                @"mode": @"default",
-                @"MTL_HUD_ELEMENTS": @"device,rosetta,layersize,layerscale,memory,fps,frameinterval,gputime,thermal,frameintervalgraph,presentdelay,frameintervalhistogram,metalcpu,gputimeline,shaders,framenumber,disk,fpsgraph,toplabeledcommandbuffers,toplabeledencoders",
-                @"MTL_HUD_ENCODER_TIMING_ENABLED": @"1",
-                @"MTL_HUD_SHOW_METRICS_RANGE": @"1",
-                @"MTL_HUD_ALIGNMENT": @"topright"
-            };
-            LOG("front end: full Apple Metal Performance HUD on (all available metrics, frame graphs and encoder timing)");
-        } else {
-            g_layer.developerHUDProperties = @{@"mode": @"default"};
-            LOG("front end: compact performance HUD on");
-        }
-    }
+    if (hud_mode >= 2)
+        LOG("front end: full Apple Metal Performance HUD configured before Metal device creation");
+    else if (hud_mode == 1)
+        LOG("front end: compact performance HUD configured before Metal device creation");
     dm_haptics_apple_init();
     self.pad = dm_gamepad_view(self.view.bounds);
     self.pad.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
