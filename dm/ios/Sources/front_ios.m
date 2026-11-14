@@ -16,6 +16,8 @@ void mtl_mem_pressure_request(int tier, int reason);   // nvn_mtl.m: request cac
 
 UIView *dm_gamepad_view(CGRect frame);
 void dm_gamepad_reset(void);
+void dm_gamepad_opmode_changed(void);
+void dm_gamepad_touch_feedback(bool on);
 void front_ios_boot(void);
 int front_ios_boot_ok(void);
 const char *front_ios_boot_message(void);   // main.m: why a build that keeps the game files off the IPA found none usable (NULL = the generic hint)
@@ -53,6 +55,7 @@ static int g_hud;   // DM_METAL_HUD=1: show the compact stats line; mode 2 uses 
 @property (nonatomic, strong) UILabel *fps;
 @property (nonatomic) BOOL launched;
 - (void)startGame;
+- (void)showFPS:(BOOL)on;
 @end
 static DmRootVC *g_root;
 static void launcher_done(void) { [g_root startGame]; }
@@ -101,6 +104,14 @@ static void launcher_done(void) { [g_root startGame]; }
     [self.view setNeedsLayout]; [self.view layoutIfNeeded];
     UIApplication.sharedApplication.idleTimerDisabled = YES;
     front_ios_boot();
+}
+- (void)showFPS:(BOOL)on {
+    if (!self.game) return;
+    setenv("DM_SHOW_FPS", on ? "1" : "0", 1);
+    [self.fps removeFromSuperview];
+    self.fps = front_ios_fps_label();
+    if (self.fps) [self.view addSubview:self.fps];
+    [self.view setNeedsLayout]; [self.view layoutIfNeeded];
 }
 - (void)viewDidLayoutSubviews {
     [super viewDidLayoutSubviews];
@@ -325,4 +336,36 @@ void front_web_attach(UIView *box) {
 }
 void front_web_detach(UIView *box) {
     (void)box; // web_apple.m owns removal and releases the view when closing.
+}
+
+
+// Runtime settings exposed by the gamepad's in-game menu. Settings that are not
+// listed here require a restart and stay on the launch screen.
+bool dm_setting_live(const char *env, const char *value) {
+    if (!env || !g_root.game) return false;
+    if (!strcmp(env, "DM_OPMODE")) {
+        if (value) {
+            int mode = atoi(value) ? 1 : 0;
+            dm_set_opmode(mode);
+            dm_gamepad_opmode_changed();
+            LOG("front end: console mode %s (in-game menu)", mode ? "docked" : "handheld");
+        }
+        return true;
+    }
+    if (!strcmp(env, "DM_SHOW_FPS")) {
+        if (value) [g_root showFPS:atoi(value) != 0];
+        return true;
+    }
+    if (!strcmp(env, "DM_TOUCH_HAPTICS")) {
+        if (value) dm_gamepad_touch_feedback(atoi(value) != 0);
+        return true;
+    }
+    if (!strcmp(env, "DM_RUMBLE")) {
+        if (value) {
+            dm_haptics_set_enabled(atoi(value) != 0);
+            LOG("front end: game rumble %s (in-game menu)", atoi(value) ? "on" : "off");
+        }
+        return true;
+    }
+    return false;
 }
