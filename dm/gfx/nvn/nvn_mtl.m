@@ -2133,6 +2133,7 @@ static pthread_mutex_t g_bc_offline_mu = PTHREAD_MUTEX_INITIALIZER;
 static int g_bc_offline_loaded;
 static NSData *g_bc_offline_blob;
 static NSDictionary<NSString *, NSDictionary *> *g_bc_offline_entries;
+static unsigned g_bc_offline_hits;
 
 static void bc_offline_load_locked(void) {
     if (g_bc_offline_loaded) return;
@@ -2630,25 +2631,61 @@ static void zb_report(const tex_t *t, unsigned base, const char *why) {
 static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture> reuse) {
     MTLTextureDescriptor *d = tex_desc(t, 1);
     if (!d) return nil;
-    int direct = stamp && direct_upload_on() && g_nvn_deswz_gpu && !(t->pool && nvn_sparse_pool(t->pool)) && nvn_deswz_gpu_direct_supported(&t->d);
+    int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
+    unsigned layers = (t->d.target == 4 || t->d.target == 9) ? t->d.depth : t->d.target == 8 ? 6 : t->d.target == 3 ? t->d.height : 1;
+    int obpp = 0; uint32_t bcs = nvn_fmt_bc_soft(t->d.format); if (bcs) bc_soft_target_for_texture(bcs, t->d.target == 2, &obpp);
+    int keep_rgba8 = bc3_keep_rgba8(t);
+    uint32_t astc_pf = 0; int astc_kind = 0;
+    int astc_bc = bcs && !keep_rgba8 && t->d.target != 2 && t->d.samples <= 1 && bc_astc_enabled((uint32_t)t->d.format, &astc_pf, &astc_kind);
+    int sparse = t->pool && nvn_sparse_pool(t->pool);
+    NSDictionary *offline = astc_bc ? bc_offline_bundle(t, d.mipmapLevelCount, layers, astc_pf) : nil;
+    id<MTLBuffer> offline_stg = nil;
+    if (offline) {
+        size_t n = [offline[@"total_size"] unsignedLongLongValue];
+        offline_stg = n ? [g_dev newBufferWithLength:n options:MTLResourceStorageModeShared] : nil;
+        if (!offline_stg) { RED_ONCE(116, "offline ASTC staging allocation failed for texture %ux%u format %#x; using runtime BC decoder", t->d.width, t->d.height, t->d.format); offline = nil; }
+        else d.pixelFormat = (MTLPixelFormat)astc_pf;
+    }
+    int direct = !offline && stamp && direct_upload_on() && g_nvn_deswz_gpu && !sparse && nvn_deswz_gpu_direct_supported(&t->d);
     if (direct) d.usage |= MTLTextureUsageShaderWrite | MTLTextureUsagePixelFormatView;
     id<MTLTexture> mt = reuse && reuse.pixelFormat == d.pixelFormat && reuse.width == d.width && reuse.height == d.height && reuse.mipmapLevelCount == d.mipmapLevelCount && reuse.textureType == d.textureType
                         && (reuse.usage & d.usage) == d.usage
                         ? reuse : [g_dev newTextureWithDescriptor:d];
     if (!mt) { RED_ONCE(2, "failed to create MTLTexture %ux%u format %#x target %d", t->d.width, t->d.height, t->d.format, t->d.target); return nil; }
     if (g_allocprof > 0) { static int n; if (n++ < 30 || n % 500 == 0) MLOG("new texture (%s) #%d ser=%llu %ux%ux%u format %#x target %d levels %u storage %p", __func__, n, (unsigned long long)t->serial, t->d.width, t->d.height, t->d.depth, t->d.format, t->d.target, t->d.levels, (void *)t->mem); }
-    res_add(mt);   // Both first upload and re-upload register residency here (Metal 4 does not make resources resident automatically; a missed registration = GPU address page fault)
-    int sparse = t->pool && nvn_sparse_pool(t->pool);
-    if (stamp) {   // no stamp: a one-time upload of content the CPU will not change (tex_init_fill), with no write tracking
+    res_add(mt);
+    if (stamp) {
         *stamp = nvn_dirty_now();
-        if (sparse) nvn_sparse_protect(t->pool, (uint64_t)(uintptr_t)t->mem, t->L.size); else nvn_dirty_protect(t->mem, t->L.size); }
-    int bw, bh, bpb = nvn_fmt_bpb(t->d.format, &bw, &bh);
-    unsigned layers = (t->d.target == 4 || t->d.target == 9) ? t->d.depth : t->d.target == 8 ? 6 : t->d.target == 3 ? t->d.height : 1;   // a cube array's depth counts layer-faces (tex_desc)
-    // BC blocks on a GPU without BC (nvn_bc_soft): the texture has the uncompressed format bc_soft_target names; each level is deswizzled as blocks, then decoded into the staging buffer
-    int obpp = 0; uint32_t bcs = nvn_fmt_bc_soft(t->d.format); if (bcs) bc_soft_target_for_texture(bcs, t->d.target == 2, &obpp);
-    int keep_rgba8 = bc3_keep_rgba8(t);
-    uint32_t astc_pf = 0; int astc_kind = 0;
-    int astc_bc = bcs && !keep_rgba8 && t->d.target != 2 && t->d.samples <= 1 && bc_astc_enabled((uint32_t)t->d.format, &astc_pf, &astc_kind);
+        if (sparse) nvn_sparse_protect(t->pool, (uint64_t)(uintptr_t)t->mem, t->L.size);
+        else nvn_dirty_protect(t->mem, t->L.size);
+    }
+    if (offline) {
+        up_begin();
+        res_add(offline_stg); [g_up_keep addObject:offline_stg];
+        NSData *blob = g_bc_offline_blob;
+        const uint8_t *pack_bytes = (const uint8_t *)blob.bytes;
+        NSArray *items = offline[@"entries"];
+        size_t off = 0, item = 0;
+        for (unsigned mip = 0; mip < d.mipmapLevelCount; mip++) {
+            uint32_t w = MAX(t->d.width >> mip, 1u);
+            uint32_t h = (t->d.target == 0 || t->d.target == 3) ? 1u : MAX(t->d.height >> mip, 1u);
+            size_t row = (size_t)((w + 3u) / 4u) * 16u;
+            size_t image = row * ((h + 3u) / 4u);
+            for (unsigned layer = 0; layer < layers; layer++) {
+                NSDictionary *e = items[item++];
+                size_t source_off = [e[@"pack_offset"] unsignedLongLongValue];
+                size_t size = [e[@"pack_size"] unsignedLongLongValue];
+                memcpy((uint8_t *)offline_stg.contents + off, pack_bytes + source_off, size);
+                up_blit_add(offline_stg, off, row, image, MTLSizeMake(w, h, 1), mt, layer, mip);
+                off += size;
+            }
+        }
+        [g_up_texs addObject:mt];
+        g_bp_up_bytes += off;
+        if (!g_bc_offline_hits++) MLOG("offline ASTC sidecar: using preconverted mip/layer data (first hit, key %s)", [offline[@"key"] UTF8String]);
+        up_flush();
+        return mt;
+    }
     size_t total = 0;
     for (unsigned l = 0; l < d.mipmapLevelCount; l++) {
         uint32_t w = MAX(t->d.width >> l, 1u), h = MAX(t->d.height >> l, 1u), z = t->d.target == 2 ? MAX(t->d.depth >> l, 1u) : 1;
