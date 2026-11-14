@@ -13,9 +13,10 @@
 #   unchanged; --no-reuse forces a full pack. The index holds only source metadata and compression settings; ZIP metadata comes from the old IPA.
 #   Only mappings whose source folder is on APFS reuse files; other mappings pack their files again. The kept run needs an APFS clone of the old IPA; if cloning fails, eligible files are copied compressed.
 #   Reused bytes are not checked against their CRC: damage inside the old IPA carries over. Use --no-reuse or delete <out.ipa>.idx to rebuild
-import argparse, collections, concurrent.futures as cf, ctypes, json, os, stat, struct, sys, time, zipfile, zlib
+import argparse, atexit, collections, concurrent.futures as cf, ctypes, json, os, re, shutil, stat, struct, sys, tempfile, time, zipfile, zlib
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../tools')))
 import romfs as rfs   # read ordinary folders and packed DMROMFS1 images alike
+import shader_lib   # map an NVN shader library as its folder or its packed .img image
 
 LEVEL = 6
 IDX_VERSION = 3
@@ -230,6 +231,36 @@ def prefix(es, files, infos, old, idx, apfs):
     return keep, pos
 
 
+
+def library_map(arc, src, skip_suffix, out, shader_files=False):
+    """Map a packed NVN library at its required archive name. A b-<chain>.img is
+    stored as msl/b-<chain>.img, not as a file named msl/b-<chain>. Folder builds
+    remain folders. When the app omits _bp libraries, make a filtered image."""
+    if not re.fullmatch(r'.*/msl/(p\\d+/)?b-[^/]+', arc) or not str(shader_lib.view(src)).endswith('.img'):
+        return arc, src
+    if shader_lib.PULLING not in skip_suffix and shader_lib.left_out_pulling(src):
+        sys.exit(f'[RED] pack_ipa: {shader_lib.image_of(src)} has no pulling vertex libraries, and this app needs them: rebuild the shader library')
+    image = shader_lib.image_of(src)
+    subset = bool(skip_suffix) and any(p.name.endswith(skip_suffix) for p in shader_lib.view(src).iterdir())
+    if not subset and not shader_files:
+        return arc + '.img', image
+    work = tempfile.mkdtemp(prefix=os.path.basename(out) + '.msl-', dir=os.path.dirname(os.path.abspath(out)))
+    atexit.register(shutil.rmtree, work, True)
+    if not shader_files:
+        image = os.path.join(work, os.path.basename(image))
+        shader_lib.subset(src, image, skip_suffix)
+        return arc + '.img', image
+    folder, keep = os.path.join(work, shader_lib.name_of(src)), shader_lib.app_files(src, skip_suffix)
+    os.mkdir(folder)
+    for member in shader_lib.view(src).iterdir():
+        if member.name not in keep:
+            continue
+        with member.open('rb') as source, open(os.path.join(folder, member.name), 'wb') as target:
+            shutil.copyfileobj(source, target, CHUNK)
+    print(f'pack: {arc} goes in as its {len(keep)} separate files (--shader-files)', flush=True)
+    return arc, folder
+
+
 def main():
     ap = argparse.ArgumentParser(description='Pack an IPA (zip) from files and folders mapped to archive paths, in parallel')
     ap.add_argument('out'); ap.add_argument('maps', nargs='+', metavar='archive_path=source')
@@ -238,11 +269,13 @@ def main():
     ap.add_argument('--skip-suffix', action='append', default=[], help='files whose names end so are left out of every folder walk')
     ap.add_argument('--no-reuse', action='store_true', help='pack every file again, without copying from the old IPA')
     ap.add_argument('--exec', action='append', default=[], help='an archive path packed with mode 755 on Windows, which has no x bit (the app executable)')
+    ap.add_argument('--shader-files', action='store_true', help='put a packed NVN shader library in as separate files instead of one .img')
     a = ap.parse_args()
     EXEC.update(p.strip('/') for p in a.exec)
     maps = []
     for m in a.maps:
         arc, sep, src = m.partition('=')
+        if sep: arc, src = library_map(arc, src, tuple(a.skip_suffix), a.out, a.shader_files)
         if not sep or not arc.strip('/') or not (os.path.isdir(src) or os.path.isfile(src)): sys.exit(f'[RED] pack_ipa: not <archive path>=<file or folder>: {m}')
         maps.append((arc.strip('/'), src))
     store = tuple(s.lower() for s in a.store.split(':') if s)
