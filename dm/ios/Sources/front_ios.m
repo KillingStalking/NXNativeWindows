@@ -310,3 +310,19 @@ void front_ios_focus_event(int ev) {
             front_ios_audio_apply(); dm_focus_set(1); break;
     }
 }
+
+
+// Offline HTML pages (web_apple.m): place the page over the game view and under the gamepad,
+// so touches on controls remain with the pad while other touches reach the page.
+void front_web_attach(UIView *box) {
+    if (!box) return;
+    UIView *root = g_root.view;
+    if (!root) return;
+    box.frame = root.bounds;
+    box.autoresizingMask = UIViewAutoresizingFlexibleWidth | UIViewAutoresizingFlexibleHeight;
+    if (g_root.game) [root insertSubview:box aboveSubview:g_root.game];
+    else [root addSubview:box];
+}
+void front_web_detach(UIView *box) {
+    (void)box; // web_apple.m owns removal and releases the view when closing.
+}
