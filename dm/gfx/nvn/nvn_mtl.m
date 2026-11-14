@@ -2637,8 +2637,14 @@ static id<MTLTexture> pkg_upload_(const tex_t *t, uint64_t *stamp, id<MTLTexture
     int keep_rgba8 = bc3_keep_rgba8(t);
     uint32_t astc_pf = 0; int astc_kind = 0;
     int astc_bc = bcs && !keep_rgba8 && t->d.target != 2 && t->d.samples <= 1 && bc_astc_enabled((uint32_t)t->d.format, &astc_pf, &astc_kind);
+    // BC7's runtime fallback is RGBA8, not ASTC. Use ASTC only when a complete
+    // preconverted sidecar exists; otherwise preserve the existing BC7 decoder path.
+    int offline_bc7 = nvn_bc_soft && nvn_bc_astc == 2 && !keep_rgba8 &&
+                      (t->d.format == 0x4D || t->d.format == 0x4E) &&
+                      t->d.target != 2 && t->d.samples <= 1;
+    if (offline_bc7) astc_pf = t->d.format == 0x4E ? 186u : 204u;
     int sparse = t->pool && nvn_sparse_pool(t->pool);
-    NSDictionary *offline = astc_bc ? bc_offline_bundle(t, d.mipmapLevelCount, layers, astc_pf) : nil;
+    NSDictionary *offline = (astc_bc || offline_bc7) ? bc_offline_bundle(t, d.mipmapLevelCount, layers, astc_pf) : nil;
     id<MTLBuffer> offline_stg = nil;
     if (offline) {
         size_t n = [offline[@"total_size"] unsignedLongLongValue];
