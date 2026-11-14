@@ -2464,7 +2464,11 @@ def build_shaders(py, repo, sh, xlate, env, logs, g, pkg_key=None, mac=False, se
     if not seen and not chain_tables(py, repo, sh, env, logs, g, chain): raise BuildError(f'no stamped Mac shader outputs in {sh / "cache" / f"b-{chain}"} (inputs.tsv): dmsh_build.py did not finish a full build')
     what = 'Mac' if mac else 'iOS'
     n = sum(1 for _ in shader_lib.view(libs).glob('*_b.metallib')) if shader_lib.exists(libs) else 0   # the image dmsh_build.py writes (a folder from an older chain)
-    if n == 0: raise BuildError(f'no {what} shader libraries in {libs}')
+    if n == 0:
+        # The Metal worker logs contain the real cause (compiler rejection, failed tool launch, or no completed outputs).
+        # Include their tail here: otherwise the later IPA stage hides the useful dmsh_build diagnostics behind a generic missing-library error.
+        tail = '\\n'.join(log.read_text(errors='replace').splitlines()[-80:]) if log.is_file() else '(dmsh_build.log is missing)'
+        raise BuildError(f'no {what} shader libraries in {libs}; last lines of {log}:\\n{tail}')
     say(f'{n} {what} shader libraries ({libs})')
     if keep_mac: say(f'{sum(1 for _ in shader_lib.view(sh / "cache" / f"b-{chain}").glob("*_b.metallib"))} Mac shader libraries kept for the Mac run command ({sh / "cache" / f"b-{chain}"})')
     t = log.read_text(errors='replace')
