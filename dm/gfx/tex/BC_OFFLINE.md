@@ -46,8 +46,10 @@ python dm/gfx/tools/bc_offline_pack.py --manifest "D:\games\bc_offline\bc_offlin
 If clang is not on PATH, pass `--clang C:\path\to\clang.exe`. A compatible prebuilt library can be supplied with `--decoder-dll`.
 
 The output directory contains:
-- one `.astc` raw block stream per converted texture subresource (no ASTC file header);
-- `bc_offline_pack.json`, including dimensions, mip/layer, NVN layout, original channel mapping, and SHA-256 hashes.
+- `bc_offline_pack.bin`: one concatenated raw ASTC block stream for all converted subresources;
+- `bc_offline_pack.json`: subresource offsets/sizes, runtime texture keys, dimensions, mip/layer, NVN layout, original channel mapping, and SHA-256 hashes.
+
+The single binary plus index avoids thousands of small files and is suitable for split-data installs.
 
 ## Supported layout boundary
 
@@ -55,12 +57,31 @@ The automatic scanner currently converts only non-sparse, swizzled BNTX textures
 
 The manifest also supports already-linear BC subresources for isolated tests. Such entries must describe BC block-row order and provide a correct `row_pitch`; do not pass Tegra block-linear bytes through the linear-input path.
 
-## Runtime integration still required
+## Runtime loading and split-data
 
-This is not yet an end-to-end game-data replacement feature. It currently:
-1. discovers eligible BNTX containers in the scanned filesystem and Yaz0 payloads;
-2. extracts their texture allocations;
-3. validates mip offsets against the repository NVN layout;
-4. transcodes eligible BC subresources into ASTC sidecar files.
+The runtime sidecar lookup is now wired into the packaged NVN texture upload path:
 
-It does **not** yet rewrite the game's texture resources, load the ASTC sidecar in the Metal runtime, or package the sidecar into the existing split-data installation flow. The game therefore continues to use its current runtime BC decoder. Do not replace game data with this pack until the runtime lookup/fallback and split-data packaging stages are implemented and tested on real game assets.
+- The packer calculates the same `nvn_texkey` used by the runtime.
+- The Metal upload path checks that every required mip/layer exists and that its ASTC dimensions, row pitch, size, and format match.
+- A matching texture uploads directly from the mmap-backed sidecar blob as ASTC, bypassing the runtime BC transcode.
+- A missing, partial, mismatched, unsupported, or memory-allocation-failed entry falls back to the existing runtime decoder.
+- BC4/BC5/BC6H remain on the runtime decoder. BC7 uses ASTC only when a complete sidecar is present and ASTC mode is enabled; otherwise its existing RGBA8 path remains active.
+
+The app looks for `bc_offline_pack/bc_offline_pack.json` and `bc_offline_pack/bc_offline_pack.bin` in the app bundle or in the split-data/Documents location.
+
+### Split-data build
+
+For the Windows build tool, set `DM_BC_OFFLINE_PACK` to the packer output directory. The normal app build bundles it; the split-data build adds it under `bc_offline_pack/` in the game data folder.
+
+For the iOS build scripts, set `DM_BC_OFFLINE_PACK` to the packer output directory. With `DM_COPY_ROMFS=NO`, the default is to keep the sidecar outside the IPA; `scripts/push_romfs.sh <UDID> <bundle-id> <resources.env>` copies the binary and index atomically to `Documents/bc_offline_pack` over AFC. With `DM_COPY_BC_OFFLINE=YES`, it is bundled in the app instead.
+
+## Remaining validation
+
+This is still experimental. Before relying on it for a game:
+1. Run the scanner against that game's extracted RomFS.
+2. Inspect `bntx_scan_summary.json` and the generated manifest; unsupported dimensions/layouts are deliberately skipped.
+3. Run the packer and confirm the number of converted and runtime-only subresources.
+4. Build and install with the sidecar in the selected bundle/split-data location.
+5. Verify real BC1/2/3/7 textures render correctly and that a missing/corrupt sidecar cleanly falls back to runtime decoding.
+
+The scanner does not yet decompress every possible game archive format, and it cannot guarantee that every texture in every title is BNTX-backed. Do not replace the original game data; the sidecar is optional and the original BC assets remain the fallback.
