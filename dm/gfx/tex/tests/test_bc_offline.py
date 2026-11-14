@@ -52,6 +52,29 @@ class OfflineBC(unittest.TestCase):
                 self.assertEqual(len(dst.raw), 64)
                 self.assertNotEqual(dst.raw, bytes(64))
 
+    def test_nvn_block_linear_mip_uses_repo_deswizzler(self):
+        # A single 4x4 BC block occupies the first bytes of one 512-byte GOB.
+        rng = random.Random(0x4F)
+        cases = [(0x41, 130, 8), (0x43, 132, 16), (0x44, 134, 16), (0x4F, 152, 16),
+                 (0x45, 131, 8), (0x47, 133, 16), (0x48, 135, 16), (0x50, 153, 16)]
+        for nvn_format, _, block_bytes in cases:
+            with self.subTest(nvn_format=hex(nvn_format)):
+                storage = bytearray(512)
+                storage[:block_bytes] = bytes(rng.randrange(256) for _ in range(block_bytes))
+                src = ctypes.create_string_buffer(bytes(storage), len(storage))
+                scratch = ctypes.create_string_buffer(block_bytes)
+                dst = ctypes.create_string_buffer(16)
+                dst_pitch, dst_size = ctypes.c_size_t(), ctypes.c_size_t()
+                rc = self.decode.level(
+                    1, nvn_format, 0, 1, 4, 4, 1, 1, 0, 0, 0, 0, 0,
+                    src, len(storage), scratch, block_bytes, dst, 16,
+                    ctypes.byref(dst_pitch), ctypes.byref(dst_size),
+                )
+                self.assertEqual(rc, 0)
+                self.assertEqual(dst_pitch.value, 16)
+                self.assertEqual(dst_size.value, 16)
+                self.assertNotEqual(dst.raw, bytes(16))
+
     def test_runtime_only_formats_are_rejected(self):
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
