@@ -34,8 +34,10 @@ FORMATS = {
 NVN_FORMATS = {
     0x41: "BC1", 0x42: "BC1", 0x43: "BC2", 0x44: "BC3",
     0x45: "BC1_SRGB", 0x46: "BC1_SRGB", 0x47: "BC2_SRGB", 0x48: "BC3_SRGB",
-    0x4D: "BC7", 0x4E: "BC7_SRGB",
+    0x49: "BC4", 0x4A: "BC4_S", 0x4B: "BC5", 0x4C: "BC5_S",
+    0x4D: "BC7", 0x4E: "BC7_SRGB", 0x4F: "BC6H_S", 0x50: "BC6H_U",
 }
+RUNTIME_ONLY = {"BC4", "BC4_S", "BC5", "BC5_S", "BC6H", "BC6H_S", "BC6H_U"}
 
 
 def sha256(data: bytes) -> str:
@@ -63,7 +65,7 @@ def build_decoder(clang: str, temp: Path) -> Path:
         clang, "--target=x86_64-pc-windows-msvc", "-O2", "-ffreestanding",
         "-fno-builtin", "-nostdlib", "-shared", "-fuse-ld=lld",
         "-Wl,/NOENTRY", "-Wl,/EXPORT:bc_offline_texture",
-        "-Wl,/EXPORT:bc_offline_texture_level",
+        "-Wl,/EXPORT:bc_offline_texture_level", "-Wl,/EXPORT:bc_offline_level_offset",
         f"-I{TEX}", "-I{ROOT / 'dm' / 'gfx' / 'nvn'}", "-o", str(dll),
         str(TEX / "bc_soft.c"), str(TEX / "nvn_bc2astc.c"),
         str(TEX / "nvn_deswizzle.c"), str(TEX / "nvn_fmt_mtl.c"),
@@ -93,6 +95,14 @@ def load_decoder(path: Path):
     ]
     level.restype = ctypes.c_int
     fn.level = level
+    level_offset = lib.bc_offline_level_offset
+    level_offset.argtypes = [
+        ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
+        ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32, ctypes.c_uint32,
+        ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32,
+    ]
+    level_offset.restype = ctypes.c_uint64
+    fn.level_offset = level_offset
     fn._bc_library = lib
     return fn
 
@@ -101,10 +111,25 @@ def _as_int(value) -> int:
 
 
 def convert_entry(entry: dict, base: Path, out_dir: Path, decode) -> dict:
-    required = ("id", "source")
-    missing = [key for key in required if key not in entry]
-    if missing:
-        raise ValueError(f"entry missing fields: {', '.join(missing)}")
+    if "id" not in entry:
+        raise ValueError("entry missing field: id")
+    mip = _as_int(entry.get("mip", 0))
+    layer = _as_int(entry.get("layer", 0))
+    if mip < 0 or layer < 0:
+        raise ValueError(f"{entry['id']}: mip and layer must be non-negative")
+    if "nvn" in entry:
+        nvn_hint = entry["nvn"]
+        hinted_format = NVN_FORMATS.get(_as_int(nvn_hint.get("format", -1)))
+    else:
+        hinted_format = str(entry.get("format", "")).upper()
+    if hinted_format in RUNTIME_ONLY:
+        return {
+            "id": str(entry["id"]), "format": hinted_format,
+            "mip": mip, "layer": layer, "skipped": True,
+            "reason": "kept on the runtime BC decoder",
+        }
+    if "source" not in entry:
+        raise ValueError(f"{entry['id']}: entry missing field: source")
     offset = _as_int(entry.get("offset", 0))
     if offset < 0:
         raise ValueError(f"{entry['id']}: negative source offset")
@@ -117,11 +142,6 @@ def convert_entry(entry: dict, base: Path, out_dir: Path, decode) -> dict:
         raw = f.read(storage_size)
     if len(raw) != storage_size:
         raise ValueError(f"{entry['id']}: source storage is truncated (need {storage_size} bytes, got {len(raw)})")
-
-    mip = _as_int(entry.get("mip", 0))
-    layer = _as_int(entry.get("layer", 0))
-    if mip < 0 or layer < 0:
-        raise ValueError(f"{entry['id']}: mip and layer must be non-negative")
 
     if "nvn" in entry:
         nvn = entry["nvn"]
@@ -146,6 +166,20 @@ def convert_entry(entry: dict, base: Path, out_dir: Path, decode) -> dict:
         switch2 = bool(nvn.get("switch2", False))
         if width <= 0 or height <= 0 or levels <= 0 or mip >= levels:
             raise ValueError(f"{entry['id']}: invalid dimensions, mip count, or mip index")
+        if "mip_offsets" in entry:
+            offsets = [_as_int(x) for x in entry["mip_offsets"]]
+            if len(offsets) != levels or any(x < 0 for x in offsets):
+                raise ValueError(f"{entry['id']}: mip_offsets must contain one non-negative offset per mip")
+            expected_offsets = [
+                int(decode.level_offset(target, nvn_format, flags, samples, width, height,
+                                        depth, levels, stride, pkg_layout, i))
+                for i in range(levels)
+            ]
+            if offsets != expected_offsets:
+                raise ValueError(
+                    f"{entry['id']}: BNTX mip pointer offsets {offsets} do not match "
+                    f"the repository NVN layout {expected_offsets}; refusing unsafe conversion"
+                )
         w = max(1, width >> mip)
         h = 1 if target in (0, 3) else max(1, height >> mip)
         blocks_x, blocks_y = (w + 3) // 4, (h + 3) // 4
@@ -176,14 +210,19 @@ def convert_entry(entry: dict, base: Path, out_dir: Path, decode) -> dict:
             "nvn_samples": samples,
             "nvn_pkg_layout": pkg_layout,
             "switch2_layout": switch2,
+            "mip_offsets_validated": "mip_offsets" in entry,
         }
     else:
         if "format" not in entry or "width" not in entry or "height" not in entry:
             raise ValueError(f"{entry['id']}: linear input requires format, width, and height")
         fmt = str(entry["format"]).upper()
         if fmt not in FORMATS:
-            if fmt in ("BC4", "BC4_SRGB", "BC5", "BC5_SRGB", "BC6H", "BC6H_SRGB"):
-                raise ValueError(f"{entry['id']}: {fmt} is intentionally left to the runtime decoder")
+            if fmt in RUNTIME_ONLY:
+                return {
+                    "id": str(entry["id"]), "format": fmt,
+                    "mip": mip, "layer": layer, "skipped": True,
+                    "reason": "kept on the runtime BC decoder",
+                }
             raise ValueError(f"{entry['id']}: unsupported format {fmt}")
         pf, block_bytes, astc_format = FORMATS[fmt]
         width, height = int(entry["width"]), int(entry["height"])
@@ -272,7 +311,9 @@ def main() -> int:
     tmp_index = index_path.with_suffix(".json.tmp")
     tmp_index.write_text(json.dumps(index, indent=2) + "\n", encoding="utf-8")
     os.replace(tmp_index, index_path)
-    print(f"converted {len(results)} BC texture subresources -> {out_dir}")
+    converted_count = sum(not item.get("skipped", False) for item in results)
+    skipped_count = len(results) - converted_count
+    print(f"converted {converted_count} BC texture subresources; kept {skipped_count} on runtime decoder -> {out_dir}")
     print(f"index: {index_path}")
     return 0
 
