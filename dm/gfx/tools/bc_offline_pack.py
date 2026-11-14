@@ -283,6 +283,7 @@ def convert_entry(entry: dict, base: Path, out_dir: Path, decode) -> dict:
         "source_sha256": sha256(raw),
         "output_sha256": sha256(converted),
         **metadata,
+        **({"channel_mapping": entry["channel_mapping"]} if "channel_mapping" in entry else {}),
     }
 
 def main() -> int:
