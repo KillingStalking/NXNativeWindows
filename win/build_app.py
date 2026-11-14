@@ -36,10 +36,12 @@ def py(*args, env=None, capture=True):
 
 # ---- dm/host/Makefile, reproduced ----
 def host_sources(game_h_dir):
-    """Reproduce the host's source and include inputs, including the separately built libvpx and dav1d sources."""
+    """Reproduce the host's source and include inputs, including separately built libvpx and dav1d sources."""
     mk = (HOST / 'Makefile').read_text(encoding='utf-8')
     want_src = 'SRC=main.c loader.c hle.c crash.c probe.c thread.c save_sync.c memstat.m haptics_apple.m pad_switch2_apple.m $(sort $(wildcard hle_*.c)) front_mac.m web_apple.m entry.S'
     want_gfx = 'GFX=$(sort $(wildcard ../gfx/*.c ../gfx/nvn/*.c ../gfx/nvn/*.m ../gfx/nvn/*.S ../gfx/tex/*.c ../gfx/tex/*.m ../gfx/vk/*.m ../gfx/gl/*.m))'
+    want_dav1d = 'DAV1D=../third_party/dav1d'
+    if want_dav1d not in mk: die('dm/host/Makefile changed (DAV1D= line): update host_sources() in win/build_app.py')
     for w in (want_src, want_gfx):
         if w not in mk: die(f'dm/host/Makefile changed ({w.split("=")[0]}= line): update host_sources() in win/build_app.py')
     src = [HOST / n for n in 'main.c loader.c hle.c crash.c probe.c thread.c save_sync.c memstat.m haptics_apple.m pad_switch2_apple.m'.split()]
@@ -52,9 +54,19 @@ def host_sources(game_h_dir):
     gfx = sorted(gfx, key=lambda p: os.path.relpath(p, HOST).replace('\\', '/'))   # make's $(sort) orders the words as text
     vpx = DM / 'third_party/libvpx'
     vpx_src = sorted(vpx.rglob('*.c'), key=lambda p: p.as_posix())
-    incs = [DM / 'gfx/nvn/include', DM / 'third_party/vulkan-headers/include', game_h_dir, vpx, DM / 'third_party/stb_vorbis', vpx / 'config']
+    dav1d = DM / 'third_party/dav1d'
+    # Mirror DAV1D_SRC in dm/host/Makefile: template C files are compiled through config/tmpl wrappers,
+    # and assembly templates / util.S are included by other assembly units rather than built directly.
+    dav1d_src = sorted((p for p in (dav1d / 'src').glob('*.c') if not p.name.endswith('_tmpl.c')), key=lambda p: p.as_posix())
+    dav1d_src += [dav1d / 'src/arm/cpu.c']
+    dav1d_src += sorted((dav1d / 'config/tmpl').glob('*.c'), key=lambda p: p.as_posix())
+    dav1d_src += sorted((p for p in (dav1d / 'src/arm/64').glob('*.S')
+                         if not p.name.endswith('_tmpl.S') and p.name != 'util.S'), key=lambda p: p.as_posix())
+    incs = [DM / 'gfx/nvn/include', DM / 'third_party/vulkan-headers/include', game_h_dir,
+            vpx, DM / 'third_party/stb_vorbis', vpx / 'config',
+            dav1d, dav1d / 'include', dav1d / 'config']
     files = []
-    for s in src + gfx + vpx_src:
+    for s in src + gfx + vpx_src + dav1d_src:
         s = s.resolve()
         if s.stem.endswith('_mac'): continue   # Mac-only sources (front_mac.m): front_ios.m implements front.h
         if s.parent == (IOS / 'Sources').resolve(): continue   # iOS sources the host borrows are compiled once, as iOS sources
@@ -354,6 +366,15 @@ def main():
     py(DM / 'tools/make_ext_font.py', dmres / 'font/nintendo_ext.ttf', tc.letter_font() or die('no bold TTF for the button icons: set LETTER_FONT'))
 
     files, incs = host_sources(gen / 'profile')
+    # The Windows toolchain has no xcrun/Metal compiler. Generate the host's embedded MSL
+    # header in source-only mode; host_msl.m then uses its documented runtime-source fallback.
+    msl_gen = gen / 'msl-iphoneos'
+    msl_sources = sorted((DM / 'gfx/msl').glob('*.metal'), key=lambda p: p.name)
+    if not msl_sources: die(f'no host Metal shader sources in {DM / "gfx/msl"}')
+    py(DM / 'gfx/tools/host_msl.py', '--source-only', '--sdk', 'iphoneos',
+       '--min', tc.setting('ios_deployment', tc.IOS_DEPLOYMENT),
+       msl_gen / 'host_msl_gen.h', *msl_sources)
+    incs.append(msl_gen.resolve())
     files += [p.resolve() for p in sorted((IOS / 'Sources').glob('*.m'))] + [(WIN / 'ios/Launcher.m').resolve(), (WIN / 'ios/DataHelp.m').resolve(), (WIN / 'ios/nxw_unzip.c').resolve(), es.resolve()]
     fws = frameworks(sdk, files)
     rt = compat_rt_needed(clang)
