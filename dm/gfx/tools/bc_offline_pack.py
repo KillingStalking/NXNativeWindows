@@ -280,6 +280,7 @@ def convert_entry(entry: dict, base: Path, out_dir: Path, decode) -> dict:
         if len(raw) < expected:
             raise ValueError(f"{entry['id']}: linear source is truncated (need {expected} bytes, got {len(raw)})")
         dst_pitch = blocks_x * 16
+        dst_pitch_value = dst_pitch
         dst_size = dst_pitch * blocks_y
         src_buf = ctypes.create_string_buffer(raw, len(raw))
         dst_buf = ctypes.create_string_buffer(dst_size)
@@ -305,7 +306,7 @@ def convert_entry(entry: dict, base: Path, out_dir: Path, decode) -> dict:
         "mip": mip,
         "layer": layer,
         "output": out_name,
-        "row_pitch": dst_pitch_value if "nvn" in entry else int(dst_pitch),
+        "row_pitch": dst_pitch_value,
         "size": len(converted),
         "source_sha256": sha256(raw),
         "output_sha256": sha256(converted),
