@@ -258,6 +258,26 @@ def main():
     if bc_offline and bc_offline.is_file(): bc_offline = bc_offline.parent
     if bc_offline and not ((bc_offline / 'bc_offline_pack.json').is_file() and (bc_offline / 'bc_offline_pack.bin').is_file()):
         die(f'BC offline pack is incomplete: {bc_offline} needs bc_offline_pack.json and bc_offline_pack.bin')
+    if env.get('DM_BC_OFFLINE_AUTO') in ('1', 'YES') and bc_offline is None:
+        # Optional end-to-end path: scan the exact RomFS selected by the NSP pipeline,
+        # validate BNTX/NVN layouts, and produce the runtime sidecar before IPA packaging.
+        bc_out = Path(env.get('DM_BC_OFFLINE_OUT') or (w / 'build/bc_offline'))
+        cmd = [sys.executable, str(DM / 'gfx/tools/bc_offline_build.py'),
+               '--root', str(romfs), '--out', str(bc_out)]
+        bc_clang = tc.llvm_tool('clang')
+        if bc_clang: cmd += ['--clang', str(bc_clang)]
+        t(f'offline BC: scanning {romfs}; output {bc_out}')
+        result = subprocess.run(cmd, capture_output=True, text=True, errors='replace')
+        if result.stdout:
+            for line in result.stdout.splitlines()[-12:]: t(line)
+        if result.returncode:
+            detail = (result.stderr or result.stdout or f'exit code {result.returncode}').strip()[-4000:]
+            die(f'offline BC scan/conversion failed: {detail}')
+        bc_offline = bc_out / 'bc_offline_pack'
+        if not ((bc_offline / 'bc_offline_pack.json').is_file() and (bc_offline / 'bc_offline_pack.bin').is_file()):
+            die(f'offline BC did not produce a complete sidecar at {bc_offline}')
+        env['DM_BC_OFFLINE_PACK'] = str(bc_offline)
+        t(f'offline BC: ready at {bc_offline}')
     out_ipa = Path(sys.argv[1]) if len(sys.argv) > 1 else w.parent / gp('ipa')
     mods, marker = gp('modules').split(), gp('romfs_marker')
     nacp = w / 'data/v0/control.nacp'
