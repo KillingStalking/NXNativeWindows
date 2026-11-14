@@ -18,6 +18,7 @@ import subprocess
 import sys
 import tempfile
 from pathlib import Path
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[3]
 TEX = ROOT / "dm" / "gfx" / "tex"
@@ -94,7 +95,19 @@ def build_decoder(clang: str, temp: Path) -> Path:
         raise RuntimeError("could not build BC offline decoder:\n" + result.stderr[-6000:])
     return output
 
-def load_decoder(path: Path):
+class OfflineDecoder:
+    def __init__(self, library: ctypes.CDLL):
+        self._library = library
+        self._decode: Any = library.bc_offline_texture
+        self.level: Any = library.bc_offline_texture_level
+        self.level_offset: Any = library.bc_offline_level_offset
+        self.texture_key: Any = library.bc_offline_texture_key
+
+    def __call__(self, *args: Any) -> int:
+        return self._decode(*args)
+
+
+def load_decoder(path: Path) -> OfflineDecoder:
     lib = ctypes.CDLL(str(path))
     fn = lib.bc_offline_texture
     fn.argtypes = [
@@ -111,7 +124,6 @@ def load_decoder(path: Path):
         ctypes.c_void_p, ctypes.c_size_t, ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_size_t),
     ]
     level.restype = ctypes.c_int
-    fn.level = level
     level_offset = lib.bc_offline_level_offset
     level_offset.argtypes = [
         ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
@@ -119,7 +131,6 @@ def load_decoder(path: Path):
         ctypes.c_uint32, ctypes.c_int, ctypes.c_uint32,
     ]
     level_offset.restype = ctypes.c_uint64
-    fn.level_offset = level_offset
     texture_key = lib.bc_offline_texture_key
     texture_key.argtypes = [
         ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int,
@@ -127,9 +138,7 @@ def load_decoder(path: Path):
         ctypes.c_uint32, ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t,
     ]
     texture_key.restype = ctypes.c_uint64
-    fn.texture_key = texture_key
-    fn._bc_library = lib
-    return fn
+    return OfflineDecoder(lib)
 
 def _as_int(value) -> int:
     return int(value, 0) if isinstance(value, str) else int(value)
@@ -225,9 +234,9 @@ def convert_entry(entry: dict, base: Path, out_dir: Path, decode) -> dict:
         )
         if rc:
             raise RuntimeError(f"{entry['id']}: NVN deswizzle/transcoder returned {rc}")
-        if dst_pitch.value != dst_pitch_expected or dst_size.value != dst_size_expected:
+        if dst_pitch.value != dst_pitch_expected  # type: ignore[attr-defined] or dst_size.value != dst_size_expected  # type: ignore[attr-defined]:
             raise RuntimeError(f"{entry['id']}: unexpected ASTC layout from native transcoder")
-        converted = dst_buf.raw[:dst_size.value]
+        converted = dst_buf.raw[:dst_size.value]  # type: ignore[attr-defined]
         key = int(decode.texture_key(
             target, nvn_format, flags, samples, width, height, depth, levels,
             stride, pkg_layout, src_buf, len(raw),
@@ -294,7 +303,7 @@ def convert_entry(entry: dict, base: Path, out_dir: Path, decode) -> dict:
         "mip": mip,
         "layer": layer,
         "output": out_name,
-        "row_pitch": int(dst_pitch.value) if "nvn" in entry else int(dst_pitch),
+        "row_pitch": int(dst_pitch.value) if "nvn" in entry else int(dst_pitch)  # type: ignore[attr-defined],
         "size": len(converted),
         "source_sha256": sha256(raw),
         "output_sha256": sha256(converted),
@@ -385,4 +394,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (OSError, ValueError, RuntimeError, json.JSONDecodeError) as exc:
         print(f"[BC-OFFLINE] FAIL: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
