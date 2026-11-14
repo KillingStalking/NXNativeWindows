@@ -10,6 +10,8 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[2] / "tools" / "bc_offline_pack.py"
 spec = importlib.util.spec_from_file_location("bc_offline_pack", SCRIPT)
+if spec is None or spec.loader is None:
+    raise RuntimeError(f"cannot load offline packer at {SCRIPT}")
 pack = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pack)
 
@@ -73,8 +75,8 @@ class OfflineBC(unittest.TestCase):
                     ctypes.byref(dst_pitch), ctypes.byref(dst_size),
                 )
                 self.assertEqual(rc, 0)
-                self.assertEqual(dst_pitch.value, 16)
-                self.assertEqual(dst_size.value, 16)
+                self.assertEqual(dst_pitch.value, 16  # type: ignore[attr-defined])
+                self.assertEqual(dst_size.value, 16  # type: ignore[attr-defined])
                 self.assertNotEqual(dst.raw, bytes(16))
 
     def test_runtime_only_formats_are_skipped_without_reading_source(self):
