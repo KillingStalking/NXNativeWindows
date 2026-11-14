@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Build a sidecar ASTC 4x4 pack from an explicit manifest of linear BC subresources.
+"""Build a sidecar ASTC 4x4 pack from explicit NVN or linear BC subresource manifests.
 
-The input files are never modified. Each manifest entry describes one mip/layer
-whose BC blocks have already been deswizzled into linear block-row order.
-BC4/BC5/BC6H are deliberately not accepted; they stay on the runtime decoder.
+NVN entries are read from complete block-linear texture storage and deswizzled with
+this repository's nvn_tex / nvn_deswizzle implementation. Linear entries are also
+accepted for isolated tests. BC4/BC5/BC6H stay on the runtime decoder.
 """
 from __future__ import annotations
 
@@ -232,7 +232,7 @@ def convert_entry(entry: dict, base: Path, out_dir: Path, decode) -> dict:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
-    ap.add_argument("--manifest", required=True, type=Path, help="JSON manifest of linear BC subresources")
+    ap.add_argument("--manifest", required=True, type=Path, help="JSON manifest of NVN block-linear or linear BC subresources")
     ap.add_argument("--out", required=True, type=Path, help="sidecar pack output directory")
     ap.add_argument("--clang", default=os.environ.get("CLANG") or shutil.which("clang"), help="Windows clang executable")
     ap.add_argument("--decoder-dll", type=Path, help="use an already-built bc_offline.dll")
