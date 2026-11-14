@@ -44,5 +44,7 @@ jobs:
       - name: Base branch's baseline (pull requests)
         if: github.event_name == 'pull_request'
         run: git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
+      - name: Targeted BC tool type diagnostics
+        run: python -m pyright dm/gfx/tools/bc_offline_pack.py dm/gfx/tools/bntx_bc_scan.py dm/gfx/tex/tests/test_bc_offline.py dm/gfx/tex/tests/test_bntx_bc_scan.py
       - name: ruff and pyright against the baseline
         run: python dm/tools/lint_python.py ${{ github.event_name == 'pull_request' && '--against FETCH_HEAD' || '' }}
