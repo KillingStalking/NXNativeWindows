@@ -52,30 +52,46 @@ def safe_name(value: str) -> str:
 
 
 def build_decoder(clang: str, temp: Path) -> Path:
-    crt = temp / "bc_offline_crt.c"
-    crt.write_text(
-        "#include <stddef.h>\n"
-        "void *memcpy(void *d,const void *s,size_t n){unsigned char *a=d;const unsigned char *b=s;while(n--)*a++=*b++;return d;}\n"
-        "void *memset(void *d,int c,size_t n){unsigned char *a=d;while(n--)*a++=(unsigned char)c;return d;}\n"
-        "int _fltused;\n",
-        encoding="ascii",
-    )
-    dll = temp / "bc_offline.dll"
-    cmd = [
-        clang, "--target=x86_64-pc-windows-msvc", "-O2", "-ffreestanding",
-        "-fno-builtin", "-nostdlib", "-shared", "-fuse-ld=lld",
-        "-Wl,/NOENTRY", "-Wl,/EXPORT:bc_offline_texture",
-        "-Wl,/EXPORT:bc_offline_texture_level", "-Wl,/EXPORT:bc_offline_level_offset",
-        f"-I{TEX}", "-I{ROOT / 'dm' / 'gfx' / 'nvn'}", "-o", str(dll),
-        str(TEX / "bc_soft.c"), str(TEX / "nvn_bc2astc.c"),
-        str(TEX / "nvn_deswizzle.c"), str(TEX / "nvn_fmt_mtl.c"),
-        str(ROOT / "dm" / "gfx" / "nvn" / "nvn_tex.c"),
-        str(TEX / "bc_offline.c"), str(crt),
-    ]
+    if os.name == "nt":
+        crt = temp / "bc_offline_crt.c"
+        crt.write_text(
+            "#include <stddef.h>\n"
+            "void *memcpy(void *d,const void *s,size_t n){unsigned char *a=d;const unsigned char *b=s;while(n--)*a++=*b++;return d;}\n"
+            "void *memset(void *d,int c,size_t n){unsigned char *a=d;while(n--)*a++=(unsigned char)c;return d;}\n"
+            "int _fltused;\n",
+            encoding="ascii",
+        )
+        dll = temp / "bc_offline.dll"
+        cmd = [
+            clang, "--target=x86_64-pc-windows-msvc", "-O2", "-ffreestanding",
+            "-fno-builtin", "-fno-stack-protector", "-nostdlib", "-shared",
+            "-fuse-ld=lld", "-Wl,/NOENTRY",
+            "-Wl,/EXPORT:bc_offline_texture",
+            "-Wl,/EXPORT:bc_offline_texture_level",
+            "-Wl,/EXPORT:bc_offline_level_offset",
+            f"-I{TEX}", f"-I{ROOT / 'dm' / 'gfx' / 'nvn'}", "-o", str(dll),
+            str(TEX / "bc_soft.c"), str(TEX / "nvn_bc2astc.c"),
+            str(TEX / "nvn_deswizzle.c"), str(TEX / "nvn_fmt_mtl.c"),
+            str(ROOT / "dm" / "gfx" / "nvn" / "nvn_tex.c"),
+            str(TEX / "bc_offline.c"), str(crt),
+        ]
+        output = dll
+    else:
+        suffix = ".dylib" if sys.platform == "darwin" else ".so"
+        output = temp / ("bc_offline" + suffix)
+        linker = "-dynamiclib" if sys.platform == "darwin" else "-shared"
+        cmd = [
+            clang, "-O2", "-fPIC", linker, "-fno-strict-aliasing",
+            f"-I{TEX}", f"-I{ROOT / 'dm' / 'gfx' / 'nvn'}", "-o", str(output),
+            str(TEX / "bc_soft.c"), str(TEX / "nvn_bc2astc.c"),
+            str(TEX / "nvn_deswizzle.c"), str(TEX / "nvn_fmt_mtl.c"),
+            str(ROOT / "dm" / "gfx" / "nvn" / "nvn_tex.c"),
+            str(TEX / "bc_offline.c"), "-lm",
+        ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode:
         raise RuntimeError("could not build BC offline decoder:\n" + result.stderr[-6000:])
-    return dll
+    return output
 
 def load_decoder(path: Path):
     lib = ctypes.CDLL(str(path))
