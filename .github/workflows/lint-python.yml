@@ -60,5 +60,17 @@ jobs:
                   line = item['range']['start']['line'] + 1
                   print(f"{item['file']}:{line}: {item['message']}")
           PY
+      - name: Locate remaining project-wide pyright diagnostics
+        run: |
+          python -m pyright --outputjson > /tmp/pyright-all.json || true
+          python - <<'PY'
+          import json
+          report = json.load(open('/tmp/pyright-all.json', encoding='utf-8'))
+          for item in report.get('generalDiagnostics', []):
+              message = item.get('message', '')
+              if 'shader_split' in message or 'not iterable' in message:
+                  line = item['range']['start']['line'] + 1
+                  print(f"{item['file']}:{line}: {message}")
+          PY
       - name: ruff and pyright against the baseline
         run: python dm/tools/lint_python.py ${{ github.event_name == 'pull_request' && '--against FETCH_HEAD' || '' }}
