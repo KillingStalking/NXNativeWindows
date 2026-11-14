@@ -45,7 +45,7 @@ static int romfs_identity_accepts(NSString *img) {
     return rc == ROMFS_ID_OK || rc == ROMFS_ID_NONE;
 }
 static NSString *romfs_locate(void) {
-    NSFileManager *fm = NSFileManager.defaultManager;
+    NSFileManager *fm = [NSFileManager defaultManager];
     NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
     NSString *img = [doc stringByAppendingPathComponent:@"romfs.img"];
     if (romfs_image_complete(img) && romfs_identity_accepts(img)) {
@@ -85,6 +85,26 @@ static NSString *data_dir(NSString *name) {
         if ([[NSFileManager.defaultManager contentsOfDirectoryAtPath:p error:nil] count]) return p;
     }
     return [res stringByAppendingPathComponent:name];
+}
+
+
+static NSString *bc_offline_dir(void) {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+    NSString *res = NSBundle.mainBundle.resourcePath;
+    NSMutableArray<NSString *> *candidates = [NSMutableArray arrayWithObjects:
+        [doc stringByAppendingPathComponent:@"bc_offline_pack"],
+        [res stringByAppendingPathComponent:@"bc_offline_pack"], nil];
+    if (g_data_root) [candidates insertObject:[g_data_root stringByAppendingPathComponent:@"bc_offline_pack"] atIndex:1];
+    for (NSString *name in [fm contentsOfDirectoryAtPath:doc error:nil] ?: @[]) {
+        if ([name hasPrefix:@"."] || [name isEqualToString:@"bc_offline_pack"]) continue;
+        [candidates addObject:[[doc stringByAppendingPathComponent:name] stringByAppendingPathComponent:@"bc_offline_pack"]];
+    }
+    for (NSString *p in candidates) {
+        if ([fm fileExistsAtPath:[p stringByAppendingPathComponent:@"bc_offline_pack.json"]] &&
+            [fm fileExistsAtPath:[p stringByAppendingPathComponent:@"bc_offline_pack.bin"]]) return p;
+    }
+    return nil;
 }
 
 // Boot prerequisites (done before UIApplicationMain): directories / environment variables / log -- the host's early load reads these
@@ -159,7 +179,14 @@ static int boot_env(void) {
     setenv("DM_TEMP", [doc stringByAppendingPathComponent:@"temp"].fileSystemRepresentation, 0);
     NSString *dm = [res stringByAppendingPathComponent:@"dm"];
     setenv("DM_NVN_SHMAP", [dm stringByAppendingPathComponent:@"shader_map.tsv"].fileSystemRepresentation, 0);
-    setenv("DM_MSL_DIR", data_dir(@"msl").fileSystemRepresentation, 0);   // a split build keeps the shader libraries with the game files
+    setenv("DM_MSL_DIR", data_dir(@"msl").fileSystemRepresentation, 0);   // a split build keeps the shader libraries with the game
+    if (!getenv("DM_BC_OFFLINE_PACK")) {
+        NSString *bcpack = bc_offline_dir();
+        if (bcpack) {
+            setenv("DM_BC_OFFLINE_PACK", bcpack.fileSystemRepresentation, 0);
+            fprintf(stderr, "boot: offline ASTC sidecar %s\\n", bcpack.fileSystemRepresentation);
+        }
+    }
     fprintf(stderr, "boot: shader libraries %s\n", data_dir(@"msl").fileSystemRepresentation);
     setenv("DM_FONT_DIR", [dm stringByAppendingPathComponent:@"font"].fileSystemRepresentation, 0);   // Shared-font stand-ins (standard.ttf / nintendo_ext.ttf): iOS lacks the macOS font path
     NSString *aoc = data_dir(@"aoc");   // add-on content: build_ipa.sh puts the RomFS extracted from the player's DLC NSPs at <App>/aoc/<index>/

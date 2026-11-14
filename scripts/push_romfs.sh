@@ -32,6 +32,10 @@ echo "identity: $(python3 -I "$(dirname "$0")/../dm/tools/romfs_image.py" --iden
 size=$(stat -f %z "$img")
 via=${ROMFS_PUSH_VIA:-auto}
 if [ "$via" = auto ]; then if command -v afcclient > /dev/null; then via=afc; else via=devicectl; fi; fi
+if [ "$sync_aoc" = 1 ] && [ -n "${DM_RESOURCE_BC_OFFLINE_PACK:-}" ]; then
+    [ -f "$DM_RESOURCE_BC_OFFLINE_PACK/bc_offline_pack.json" ] && [ -f "$DM_RESOURCE_BC_OFFLINE_PACK/bc_offline_pack.bin" ] || { echo "[RED] offline ASTC pack is incomplete: $DM_RESOURCE_BC_OFFLINE_PACK" >&2; exit 1; }
+    [ "$via" = afc ] || { echo "[RED] offline ASTC sidecar sync requires AFC (install afcclient with libimobiledevice); devicectl can buffer very large files in Mac memory" >&2; exit 1; }
+fi
 if [ "$via" = afc ]; then
     afc() { afcclient -u "$dev" --container "$id" -- "$@"; }
     remote_size() { afc info "$1" 2> /dev/null | sed -n 's/^ *"st_size": *\([0-9][0-9]*\).*/\1/p'; }
@@ -55,6 +59,33 @@ elif [ "$via" = devicectl ]; then
     fi
     xcrun devicectl device copy to --device "$dev" --domain-type appDataContainer --domain-identifier "$id" --source "$img" --destination Documents/romfs.img -q
 else echo "ROMFS_PUSH_VIA is afc or devicectl, not $via" >&2; exit 1; fi
+# Offline BC ASTC sidecar: two files, copied atomically so the app never sees a partial pack.
+if [ "$sync_aoc" = 1 ] && [ "$via" = afc ]; then
+    if [ -n "${DM_RESOURCE_BC_OFFLINE_PACK:-}" ]; then
+        json="$DM_RESOURCE_BC_OFFLINE_PACK/bc_offline_pack.json"
+        pack="$DM_RESOURCE_BC_OFFLINE_PACK/bc_offline_pack.bin"
+        json_size=$(stat -f %z "$json"); pack_size=$(stat -f %z "$pack")
+        afc rm -rf /Documents/bc_offline_pack.part < /dev/null > /dev/null 2>&1 || true
+        afc mkdir /Documents/bc_offline_pack.part
+        afc put -f "$json" /Documents/bc_offline_pack.part/bc_offline_pack.json
+        afc put -f "$pack" /Documents/bc_offline_pack.part/bc_offline_pack.bin
+        [ "$(remote_size /Documents/bc_offline_pack.part/bc_offline_pack.json)" = "$json_size" ] &&
+        [ "$(remote_size /Documents/bc_offline_pack.part/bc_offline_pack.bin)" = "$pack_size" ] || {
+            echo "[RED] offline ASTC sidecar copy is incomplete; the previous Documents/bc_offline_pack is unchanged. Run this again" >&2; exit 1;
+        }
+        afc rm -rf /Documents/bc_offline_pack < /dev/null > /dev/null 2>&1 || true
+        afc mv /Documents/bc_offline_pack.part /Documents/bc_offline_pack
+        [ "$(remote_size /Documents/bc_offline_pack/bc_offline_pack.json)" = "$json_size" ] &&
+        [ "$(remote_size /Documents/bc_offline_pack/bc_offline_pack.bin)" = "$pack_size" ] || {
+            echo "[RED] offline ASTC sidecar was not installed completely; run this again" >&2; exit 1;
+        }
+        echo "offline ASTC sidecar on the phone: $id"
+    else
+        afc rm -rf /Documents/bc_offline_pack.part < /dev/null > /dev/null 2>&1 || true
+        afc rm -rf /Documents/bc_offline_pack < /dev/null > /dev/null 2>&1 || true
+        echo "no offline ASTC sidecar in this build; removed any stale phone copy"
+    fi
+fi
 # Add-on content (DLC): <index>.img files or legacy <index>/ trees. resources.env describes the complete DLC set, so Documents/aoc is replaced, not merged (a merge would keep
 # removed DLC that the host still reports owned). An empty set leaves an empty Documents/aoc, which also takes precedence over bundled DLC at startup. Over AFC only: devicectl's
 # --remove-existing-content true, given Documents/aoc, empties the app's whole data container, saves included, and then fails with "Failed to retrieve the file node for

@@ -36,6 +36,13 @@ else check_program "$DM_RESOURCE_ROMFS" "$DM_RESOURCE_MARKER" "$DM_RESOURCE_SHAD
 [ -z "$DM_RESOURCE_AOC" ] || [ -d "$DM_RESOURCE_AOC" ] || die "Add-on content unavailable: $DM_RESOURCE_AOC"
 DM_RESOURCE_PSO=${DM_RESOURCE_PSO:-}   # (a project prepared before the pipeline archive has none)
 [ -z "$DM_RESOURCE_PSO" ] || [ -f "$DM_RESOURCE_PSO/prebuilt.tsv" ] || die "Pipeline archive unavailable: $DM_RESOURCE_PSO"
+DM_RESOURCE_BC_OFFLINE_PACK=${DM_RESOURCE_BC_OFFLINE_PACK:-}
+DM_COPY_BC_OFFLINE=${DM_COPY_BC_OFFLINE:-YES}
+if [ -n "$DM_RESOURCE_BC_OFFLINE_PACK" ]; then
+    [ -f "$DM_RESOURCE_BC_OFFLINE_PACK/bc_offline_pack.json" ] &&
+    [ -f "$DM_RESOURCE_BC_OFFLINE_PACK/bc_offline_pack.bin" ] ||
+        die "Offline ASTC pack unavailable or incomplete: $DM_RESOURCE_BC_OFFLINE_PACK"
+fi
 echo 'Copy game resources (the first build copies the complete game; later builds sync changes)'
 # A first copy into an empty place is an APFS clone (cp -c, clonefile): the game's files take no more disk space until either side changes, where rsync wrote all of them again
 # (BotW's app is 16.5 GB; a full copy filled a Mac that had 13 GB free). cp falls back to a plain copy on a volume without clones. Later builds sync with rsync as before
@@ -94,6 +101,12 @@ if [ -n "$DM_RESOURCE_AOC" ]; then
     sync_dir "$DM_RESOURCE_AOC" "$APP/aoc"
 else
     rm -rf "$APP/aoc"
+fi
+# Offline BC ASTC sidecar: keep it outside the IPA for split-data installs, or bundle it beside the game resources.
+if [ -n "$DM_RESOURCE_BC_OFFLINE_PACK" ] && [ "$DM_COPY_BC_OFFLINE" != NO ]; then
+    sync_dir "$DM_RESOURCE_BC_OFFLINE_PACK" "$APP/bc_offline_pack"
+else
+    rm -rf "$APP/bc_offline_pack"
 fi
 # The pipeline archive made offline (the shader pairs' bases, build_ipa.sh): the app hands <App>/pso to the host as DM_PSO_BUNDLE
 if [ -n "$DM_RESOURCE_PSO" ]; then

@@ -27,6 +27,13 @@ gp() { python3 "$DM/games/game.py" "$GAME" "$1" || die "game profile $GD: $1"; }
 PKG=$(gp package)
 if [ -z "${ROMFS:-}" ] && [ -f "$W/data/$PKG/RomFS.img" ]; then ROMFS=$W/data/$PKG/RomFS.img; fi
 PATCHED=${PATCHED:-$W/build/patched_$PKG}; ROMFS=${ROMFS:-$W/data/$PKG/RomFS}; MSL_IOS=${MSL_IOS:-$W/build/ios/dmsh_b}; AOC=${AOC-$W/data/aoc}
+BC_OFFLINE_PACK=${DM_BC_OFFLINE_PACK:-}
+if [ -n "$BC_OFFLINE_PACK" ]; then
+  [ -d "$BC_OFFLINE_PACK" ] || die "DM_BC_OFFLINE_PACK must be the pack folder: $BC_OFFLINE_PACK"
+  [ -f "$BC_OFFLINE_PACK/bc_offline_pack.json" ] && [ -f "$BC_OFFLINE_PACK/bc_offline_pack.bin" ] || die "incomplete offline ASTC pack: $BC_OFFLINE_PACK"
+fi
+if [ -z "${DM_COPY_BC_OFFLINE+x}" ]; then if [ "${DM_COPY_ROMFS:-YES}" = NO ]; then DM_COPY_BC_OFFLINE=NO; else DM_COPY_BC_OFFLINE=YES; fi; fi
+export DM_COPY_BC_OFFLINE
 PREPARE_XCODE=NO; [ "${1:-}" != --prepare-xcode ] || PREPARE_XCODE=YES
 OUT_IPA=${1:-$(dirname "$W")/$(gp ipa)}; O=$W/build/ios/pkg; DD=$O/dd
 XCODE_DD=${DM_XCODE_DERIVED_DATA:-$W/build/ios/xcode-dd}
@@ -135,7 +142,7 @@ fi
 xcodegen generate -q > /dev/null || die "xcodegen"
 # DM_METAL_CAPTURE=1: a development build that may write GPU frame captures (MetalCaptureEnabled; the host's DM_GPU_CAPTURE switch writes them to Documents/gpu_captures)
 if [ "${DM_METAL_CAPTURE:-0}" = 1 ]; then /usr/libexec/PlistBuddy -c "Add :MetalCaptureEnabled bool true" Gen/Info.plist > /dev/null || die "MetalCaptureEnabled"; t "Metal frame capture: enabled (DM_METAL_CAPTURE=1)"; fi
-DM_RESOURCE_BUILD=${PKG:-} GAME=$GAME python3 tools/gen_resources.py "$IOS" "$ROMFS" "$MARKER" "$MSL_IOS/$MSLDIR" "$MSLDIR" "$AOC" "$XCODE_DD" "$DM/gfx/nvn/dmsh_chain.h" "$PSO" || die "generate Xcode resource paths"
+DM_RESOURCE_BUILD=${PKG:-} GAME=$GAME DM_BC_OFFLINE_PACK="$BC_OFFLINE_PACK" DM_COPY_BC_OFFLINE="$DM_COPY_BC_OFFLINE" python3 tools/gen_resources.py "$IOS" "$ROMFS" "$MARKER" "$MSL_IOS/$MSLDIR" "$MSLDIR" "$AOC" "$XCODE_DD" "$DM/gfx/nvn/dmsh_chain.h" "$PSO" || die "generate Xcode resource paths"
 if [ "$PREPARE_XCODE" = YES ]; then
   t "Xcode project: $IOS/DmIOS.xcodeproj"
   t "Xcode derived data: $XCODE_DD"
@@ -157,7 +164,7 @@ APP=$DD/Build/Products/Release-iphoneos/DmIOS.app
 # Straight from the sources: the app without its signature, and without the folders an app built before pack_ipa.py still has (DerivedData keeps resources that left the project;
 # msl/ is also deleted there, it took 1.5 GB of the home disk), then the shader libraries, the add-on content (the RomFS extracted from the player's DLC NSPs, one folder per index:
 # the app sets DM_AOC_DIR at launch, the host reports them as owned and mounts them from it) and the RomFS
-rm -rf "$APP/msl" "$O/Payload"   # Payload/: what the copy-and-zip packing left behind, as was out.ipa (and its index) unless it is the IPA packed here, which a repeat pack reuses
+rm -rf "$APP/msl" "$APP/bc_offline_pack" "$O/Payload"   # Payload/: what the copy-and-zip packing left behind, as was out.ipa (and its index) unless it is the IPA packed here, which a repeat pack reuses
 [ "$O/out.ipa" -ef "$OUT_IPA" ] || rm -f "$O/out.ipa"; [ "$O/out.ipa.idx" -ef "$OUT_IPA.idx" ] || rm -f "$O/out.ipa.idx"
 # The entitlements of an unsigned IPA: an unsigned build has no signature for a sideloader to read them from, so the Increased Memory Limit request would be lost (AltStore and others carry over
 # the entitlements of the signature they replace; the Xcode project gets them through CODE_SIGN_ENTITLEMENTS, above). The executable gets an ad-hoc signature that carries them: the sideloader
@@ -185,6 +192,8 @@ if [ "${DM_COPY_ROMFS:-YES}" = NO ]; then
   fi
 elif [ -f "$ROMFS" ]; then MAPS=("$P/romfs.img=$ROMFS"); else MAPS=("$P/romfs=$ROMFS"); fi
 if [ -n "$AOC" ] && [ -d "$AOC" ]; then MAPS+=("$P/aoc=$AOC"); t "add-on content: $(ls "$AOC" | tr '\n' ' ')"; fi
+if [ -n "$BC_OFFLINE_PACK" ] && [ "$DM_COPY_BC_OFFLINE" != NO ]; then MAPS+=("$P/bc_offline_pack=$BC_OFFLINE_PACK"); t "offline ASTC sidecar: bundled";
+elif [ -n "$BC_OFFLINE_PACK" ]; then t "offline ASTC sidecar: external split data; push with scripts/push_romfs.sh"; fi
 if [ -n "${PSO:-}" ]; then MAPS+=("$P/pso=$PSO"); fi
 MAPS+=("$P/msl/$MSLDIR=$MSL_IOS/$MSLDIR" "$P=$APP")
 t "pack IPA (already-compressed game files stored, everything else deflated)"
@@ -194,5 +203,5 @@ PULL=$(sed -n 's/^#define DM_GAME_PSO_MTL4 //p' "$DM/host/gen/$GAME/game_profile
 case "$PULL" in 0|1) ;; *) die "no DM_GAME_PSO_MTL4 in generated game profile";; esac
 # Keep this array nonempty: macOS Bash 3.2 treats an empty array as unset under set -u.
 PACK_OPTS=(--store "$(gp zip_store)"); [ -n "${PSO:-}" ] || [ "${IOS_PULL:-$PULL}" = 1 ] || PACK_OPTS+=(--skip-suffix _bp.metallib)
-python3 tools/pack_ipa.py "$OUT_IPA" "${PACK_OPTS[@]}" --skip $P/_CodeSignature --skip $P/embedded.mobileprovision --skip $P/msl --skip $P/aoc --skip $P/romfs --skip $P/romfs.img --skip $P/romfs.id "${MAPS[@]}" || die "pack_ipa"
+python3 tools/pack_ipa.py "$OUT_IPA" "${PACK_OPTS[@]}" --skip $P/_CodeSignature --skip $P/embedded.mobileprovision --skip $P/msl --skip $P/aoc --skip $P/romfs --skip $P/romfs.img --skip $P/romfs.id --skip $P/bc_offline_pack "${MAPS[@]}" || die "pack_ipa"
 t "done: $OUT_IPA ($(du -h "$OUT_IPA" | cut -f1))"
