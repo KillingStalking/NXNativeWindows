@@ -14,6 +14,8 @@
 #   Only mappings whose source folder is on APFS reuse files; other mappings pack their files again. The kept run needs an APFS clone of the old IPA; if cloning fails, eligible files are copied compressed.
 #   Reused bytes are not checked against their CRC: damage inside the old IPA carries over. Use --no-reuse or delete <out.ipa>.idx to rebuild
 import argparse, collections, concurrent.futures as cf, ctypes, json, os, stat, struct, sys, time, zipfile, zlib
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '../../tools')))
+import romfs as rfs   # read ordinary folders and packed DMROMFS1 images alike
 
 LEVEL = 6
 IDX_VERSION = 3
@@ -36,7 +38,7 @@ def entries(maps, skip, skip_suffix=()):
         if name in seen: sys.exit(f'[RED] pack_ipa: {name} twice in the archive')
         seen.add(name); out.append(Entry(name, path, st, src))
     def walk(d, arc):
-        with os.scandir(d) as it: es = sorted(it, key=lambda e: e.name)
+        with rfs.os.scandir(d) as it: es = sorted(it, key=lambda e: e.name)
         for e in es:
             name = f'{arc}/{e.name}'
             if name in skip or name in roots or (skip_suffix and e.name.endswith(skip_suffix) and not e.is_dir(follow_symlinks=False)): continue
@@ -50,14 +52,14 @@ def entries(maps, skip, skip_suffix=()):
             p = '/'.join(parts[:i])
             if p + '/' not in seen:
                 add(p + '/', None, None); parents.add(p + '/')
-        source_stat = os.stat(src)
+        source_stat = rfs.stat(src)
         if stat.S_ISREG(source_stat.st_mode): add(arc, src, source_stat)
         else: add(arc + '/', src, source_stat); walk(src, arc)
     return out
 
 
 def load(path, deflate):   # in the pool: (method, CRC, the bytes to write, uncompressed length)
-    with open(path, 'rb') as f: data = f.read()
+    with rfs.open(path, 'rb') as f: data = f.read()
     crc, usize = zlib.crc32(data), len(data)
     if deflate and data:
         c = zlib.compressobj(LEVEL, zlib.DEFLATED, -15); z = c.compress(data) + c.flush()
@@ -145,7 +147,7 @@ class Zip:
         usize = e.st.st_size; z64 = usize >= L32   # a deflate that is not smaller is redone stored, so the deflated size stays below usize
         h = self.local(e, 8 if deflate else 0, 0, 0 if deflate else usize, usize, z64)
         crc, csize, read, c = 0, 0, 0, zlib.compressobj(LEVEL, zlib.DEFLATED, -15) if deflate else None
-        with open(e.path, 'rb') as f:
+        with rfs.open(e.path, 'rb') as f:
             while b := f.read(CHUNK):
                 read += len(b); crc = zlib.crc32(b, crc)
                 if c: b = c.compress(b)
