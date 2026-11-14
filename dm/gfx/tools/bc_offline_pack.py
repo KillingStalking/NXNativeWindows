@@ -21,6 +21,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[3]
 TEX = ROOT / "dm" / "gfx" / "tex"
+TOOLS = ROOT / "dm" / "gfx" / "tools"
 FORMATS = {
     "BC1": (130, 8, "ASTC_4x4_LDR"),
     "BC1_SRGB": (131, 8, "ASTC_4x4_SRGB"),
@@ -73,7 +74,7 @@ def build_decoder(clang: str, temp: Path) -> Path:
             str(TEX / "bc_soft.c"), str(TEX / "nvn_bc2astc.c"),
             str(TEX / "nvn_deswizzle.c"), str(TEX / "nvn_fmt_mtl.c"),
             str(ROOT / "dm" / "gfx" / "nvn" / "nvn_tex.c"),
-            str(TEX / "bc_offline.c"), str(crt),
+            str(TOOLS / "bc_offline.c"), str(crt),
         ]
         output = dll
     else:
@@ -86,7 +87,7 @@ def build_decoder(clang: str, temp: Path) -> Path:
             str(TEX / "bc_soft.c"), str(TEX / "nvn_bc2astc.c"),
             str(TEX / "nvn_deswizzle.c"), str(TEX / "nvn_fmt_mtl.c"),
             str(ROOT / "dm" / "gfx" / "nvn" / "nvn_tex.c"),
-            str(TEX / "bc_offline.c"), "-lm",
+            str(TOOLS / "bc_offline.c"), "-lm",
         ]
     result = subprocess.run(cmd, capture_output=True, text=True)
     if result.returncode:
