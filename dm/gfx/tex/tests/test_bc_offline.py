@@ -134,5 +134,26 @@ class OfflineBC(unittest.TestCase):
             self.assertEqual(result["size"], 4096)
 
 
+    def test_bundle_results_writes_single_blob_and_offsets(self):
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            out = base / "pack"
+            out.mkdir()
+            (base / "source.bc").write_bytes(bytes(range(16)))
+            result = pack.convert_entry(
+                {"id": "one", "format": "BC3", "width": 4, "height": 4, "source": "source.bc"},
+                base, out, self.decode,
+            )
+            astc_path = out / result["output"]
+            astc_bytes = astc_path.read_bytes()
+            pack_path = pack.bundle_results([result], out)
+            self.assertEqual(pack_path.name, "bc_offline_pack.bin")
+            self.assertEqual(pack_path.read_bytes(), astc_bytes)
+            self.assertEqual(result["pack_offset"], 0)
+            self.assertEqual(result["pack_size"], 16)
+            self.assertNotIn("output", result)
+            self.assertFalse(astc_path.exists())
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
