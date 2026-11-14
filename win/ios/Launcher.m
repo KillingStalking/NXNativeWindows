@@ -211,6 +211,44 @@ static int increased_memory_limit(void) {
     return v;
 }
 
+
+// ---- offline BC sidecar summary (the pack is optional; missing textures keep using the runtime decoder) ----
+static NSDictionary *offline_bc_summary(void) {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSMutableArray<NSString *> *candidates = [NSMutableArray array];
+    const char *env = getenv("DM_BC_OFFLINE_PACK");
+    if (env && *env) [candidates addObject:@(env)];
+    NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES).firstObject;
+    NSString *res = NSBundle.mainBundle.resourcePath;
+    if (doc.length) [candidates addObject:[doc stringByAppendingPathComponent:@"bc_offline_pack"]];
+    if (res.length) [candidates addObject:[res stringByAppendingPathComponent:@"bc_offline_pack"]];
+    for (NSString *p in candidates) {
+        BOOL isDir = NO;
+        if (![fm fileExistsAtPath:p isDirectory:&isDir]) continue;
+        NSString *dir = isDir ? p : p.stringByDeletingLastPathComponent;
+        NSString *jsonPath = [dir stringByAppendingPathComponent:@"bc_offline_pack.json"];
+        NSString *binPath = [dir stringByAppendingPathComponent:@"bc_offline_pack.bin"];
+        NSData *data = [NSData dataWithContentsOfFile:jsonPath options:NSDataReadingMappedIfSafe error:nil];
+        NSDictionary *index = data ? [NSJSONSerialization JSONObjectWithData:data options:0 error:nil] : nil;
+        NSArray *textures = [index[@"textures"] isKindOfClass:NSArray.class] ? index[@"textures"] : nil;
+        if (![fm fileExistsAtPath:binPath] || !textures) continue;
+        NSUInteger converted = 0, skipped = 0;
+        for (id item in textures) {
+            if (![item isKindOfClass:NSDictionary.class]) continue;
+            if ([item[@"skipped"] respondsToSelector:@selector(boolValue)] && [item[@"skipped"] boolValue]) skipped++;
+            else converted++;
+        }
+        NSDictionary *attrs = [fm attributesOfItemAtPath:binPath error:nil];
+        unsigned long long bytes = [attrs[NSFileSize] unsignedLongLongValue];
+        return @{@"ready": @YES, @"converted": @(converted), @"skipped": @(skipped), @"bytes": @(bytes)};
+    }
+    return @{@"ready": @NO, @"converted": @0, @"skipped": @0, @"bytes": @0};
+}
+
+static NSString *offline_bc_size(unsigned long long bytes) {
+    return [NSByteCountFormatter stringFromByteCount:(long long)bytes countStyle:NSByteCountFormatterCountStyleFile];
+}
+
 // ---- the settings list ----
 @interface DmSettingsVC : UITableViewController
 @property (strong) DmLauncherModel *m; @property (strong) NSTimer *timer; @property (strong) UILabel *memory;
@@ -225,12 +263,23 @@ static int increased_memory_limit(void) {
 }
 - (void)dealloc { [self.timer invalidate]; }
 - (NSInteger)resetSection { return self.m.sections.count; }
-- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return self.m.sections.count + 2; }   // the sections, Reset, Memory available
-- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)sec { return sec < (NSInteger)self.m.sections.count ? (NSInteger)[self.m inSection:self.m.sections[sec]].count : sec > self.resetSection ? 2 : 1; }
-- (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)sec { return sec < (NSInteger)self.m.sections.count ? self.m.sections[sec] : nil; }
+- (NSInteger)offlineBCSection { return self.resetSection + 1; }
+- (NSInteger)memorySection { return self.resetSection + 2; }
+- (NSInteger)numberOfSectionsInTableView:(UITableView *)tv { return self.m.sections.count + 3; }   // settings, Reset, Offline BC, Memory available
+- (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)sec {
+    if (sec < (NSInteger)self.m.sections.count) return (NSInteger)[self.m inSection:self.m.sections[sec]].count;
+    if (sec == self.resetSection) return 1;
+    if (sec == self.offlineBCSection) return 3;
+    return 2;
+}
+- (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)sec {
+    if (sec < (NSInteger)self.m.sections.count) return self.m.sections[sec];
+    return sec == self.offlineBCSection ? @"Offline BC" : nil;
+}
 - (NSString *)tableView:(UITableView *)tv titleForFooterInSection:(NSInteger)sec {
     if (sec == self.resetSection) return @"Brings back all settings this game was tested with.";
-    if (sec > self.resetSection && !increased_memory_limit())
+    if (sec == self.offlineBCSection) return @"Preconverted ASTC textures are used when a matching texture is found. Other textures keep using the runtime decoder.";
+    if (sec == self.memorySection && !increased_memory_limit())
         return @"Increased Memory Limit is off: iOS gives this app less memory, and a big game can be closed when an area loads. A free Apple ID cannot turn it on (the signing app drops it); a paid developer account can. Texture memory saver (Performance) helps meanwhile.";
     return nil;
 }
@@ -248,7 +297,23 @@ static int increased_memory_limit(void) {
             [b.centerYAnchor constraintEqualToAnchor:v.centerYAnchor], [v.heightAnchor constraintGreaterThanOrEqualToConstant:48]]];
         return c;
     }
-    if (ip.section > self.resetSection && ip.row == 1) {   // Increased Memory Limit: On (green) / Off (orange)
+    if (ip.section == self.offlineBCSection) {
+        NSDictionary *bc = offline_bc_summary();
+        NSArray<NSString *> *labels = @[@"Pack status", @"Converted subresources", @"Kept on runtime decoder"];
+        BOOL ready = [bc[@"ready"] boolValue];
+        NSString *value = ip.row == 0 ? (ready ? @"● Ready" : @"Not installed")
+            : ip.row == 1 ? [NSString stringWithFormat:@"%lu", (unsigned long)[bc[@"converted"] unsignedIntegerValue]]
+            : [NSString stringWithFormat:@"%lu", (unsigned long)[bc[@"skipped"] unsignedIntegerValue]];
+        UILabel *l = body_label(labels[ip.row]);
+        UILabel *st = value_label(value);
+        if (ip.row == 0) st.textColor = ready ? UIColor.systemGreenColor : UIColor.secondaryLabelColor;
+        [v addSubview:l]; [v addSubview:st];
+        [NSLayoutConstraint activateConstraints:@[[l.leadingAnchor constraintEqualToAnchor:g.leadingAnchor], [l.centerYAnchor constraintEqualToAnchor:v.centerYAnchor],
+            [st.trailingAnchor constraintEqualToAnchor:g.trailingAnchor], [st.centerYAnchor constraintEqualToAnchor:v.centerYAnchor],
+            [v.heightAnchor constraintGreaterThanOrEqualToConstant:48]]];
+        return c;
+    }
+    if (ip.section == self.memorySection && ip.row == 1) {   // Increased Memory Limit: On (green) / Off (orange)
         UILabel *l = body_label(@"Increased Memory Limit");
         int on = increased_memory_limit();
         UILabel *st = value_label(on ? @"● On" : @"● Off"); st.textColor = on ? UIColor.systemGreenColor : UIColor.systemOrangeColor;
@@ -258,7 +323,7 @@ static int increased_memory_limit(void) {
             [v.heightAnchor constraintGreaterThanOrEqualToConstant:48]]];
         return c;
     }
-    if (ip.section > self.resetSection) {   // Memory available
+    if (ip.section == self.memorySection) {   // Memory available
         UILabel *l = body_label(@"Memory available");
         self.memory = value_label([NSByteCountFormatter stringFromByteCount:(long long)os_proc_available_memory() countStyle:NSByteCountFormatterCountStyleMemory]);
         [v addSubview:l]; [v addSubview:self.memory];
