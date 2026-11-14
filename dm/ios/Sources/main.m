@@ -92,14 +92,15 @@ static NSString *bc_offline_dir(void) {
     NSFileManager *fm = NSFileManager.defaultManager;
     NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
     NSString *res = NSBundle.mainBundle.resourcePath;
-    NSString *candidates[3] = {
+    NSMutableArray<NSString *> *candidates = [NSMutableArray arrayWithObjects:
         [doc stringByAppendingPathComponent:@"bc_offline_pack"],
-        g_data_root ? [g_data_root stringByAppendingPathComponent:@"bc_offline_pack"] : nil,
-        [res stringByAppendingPathComponent:@"bc_offline_pack"]
-    };
-    for (int i = 0; i < 3; i++) {
-        NSString *p = candidates[i];
-        if (!p) continue;
+        [res stringByAppendingPathComponent:@"bc_offline_pack"], nil];
+    if (g_data_root) [candidates insertObject:[g_data_root stringByAppendingPathComponent:@"bc_offline_pack"] atIndex:1];
+    for (NSString *name in [fm contentsOfDirectoryAtPath:doc error:nil] ?: @[]) {
+        if ([name hasPrefix:@"."] || [name isEqualToString:@"bc_offline_pack"]) continue;
+        [candidates addObject:[[doc stringByAppendingPathComponent:name] stringByAppendingPathComponent:@"bc_offline_pack"]];
+    }
+    for (NSString *p in candidates) {
         if ([fm fileExistsAtPath:[p stringByAppendingPathComponent:@"bc_offline_pack.json"]] &&
             [fm fileExistsAtPath:[p stringByAppendingPathComponent:@"bc_offline_pack.bin"]]) return p;
     }
@@ -185,7 +186,7 @@ static int boot_env(void) {
             setenv("DM_BC_OFFLINE_PACK", bcpack.fileSystemRepresentation, 0);
             fprintf(stderr, "boot: offline ASTC sidecar %s\\n", bcpack.fileSystemRepresentation);
         }
-    } files
+    }
     fprintf(stderr, "boot: shader libraries %s\n", data_dir(@"msl").fileSystemRepresentation);
     setenv("DM_FONT_DIR", [dm stringByAppendingPathComponent:@"font"].fileSystemRepresentation, 0);   // Shared-font stand-ins (standard.ttf / nintendo_ext.ttf): iOS lacks the macOS font path
     NSString *aoc = data_dir(@"aoc");   // add-on content: build_ipa.sh puts the RomFS extracted from the player's DLC NSPs at <App>/aoc/<index>/
