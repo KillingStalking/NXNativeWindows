@@ -182,6 +182,87 @@ def parse_bntx(buf, base=0, label="<memory>"):
     return {"base": base, "size": file_size, "textures": textures}
 
 
+
+def decompress_yaz0(buf, base=0, max_output=1024 * 1024 * 1024):
+    """Decode a Yaz0 stream with strict input/output bounds."""
+    if bytes(buf[base:base + 4]) != b"Yaz0" or base + 16 > len(buf):
+        raise BNTXError("invalid Yaz0 header")
+    (size,) = struct.unpack_from(">I", buf, base + 4)
+    if not size or size > max_output:
+        raise BNTXError(f"Yaz0 output size {size} is outside the allowed range")
+    src = base + 16
+    out = bytearray(size)
+    dst = 0
+    while dst < size:
+        if src >= len(buf):
+            raise BNTXError("truncated Yaz0 code stream")
+        code = buf[src]
+        src += 1
+        for bit in range(7, -1, -1):
+            if dst >= size:
+                break
+            if code & (1 << bit):
+                if src >= len(buf):
+                    raise BNTXError("truncated Yaz0 literal")
+                out[dst] = buf[src]
+                src += 1
+                dst += 1
+            else:
+                if src + 2 > len(buf):
+                    raise BNTXError("truncated Yaz0 back-reference")
+                b1, b2 = buf[src], buf[src + 1]
+                src += 2
+                distance = ((b1 & 0x0F) << 8) | b2
+                length = b1 >> 4
+                if length == 0:
+                    if src >= len(buf):
+                        raise BNTXError("truncated Yaz0 extended length")
+                    length = buf[src] + 0x12
+                    src += 1
+                else:
+                    length += 2
+                copy_from = dst - distance - 1
+                if copy_from < 0 or length > size - dst:
+                    raise BNTXError("invalid Yaz0 back-reference range")
+                for _ in range(length):
+                    out[dst] = out[copy_from]
+                    dst += 1
+                    copy_from += 1
+    return bytes(out)
+
+
+def iter_bntx_containers(buf, label, errors, depth=0):
+    """Find direct or Yaz0-compressed BNTX containers, including embedded SARC entries."""
+    pos = 0
+    while True:
+        pos = buf.find(b"BNTX", pos)
+        if pos < 0:
+            break
+        if bytes(buf[pos:pos + 8]) != MAGIC:
+            pos += 4
+            continue
+        try:
+            parsed = parse_bntx(buf, pos, label)
+            yield buf, pos, label, parsed
+            pos += parsed["size"]
+        except (BNTXError, struct.error) as exc:
+            errors.append(f"{label}@0x{pos:x}: {exc}")
+            pos += 4
+
+    if depth >= 4:
+        return
+    pos = 0
+    while True:
+        pos = buf.find(b"Yaz0", pos)
+        if pos < 0:
+            break
+        try:
+            decoded = decompress_yaz0(buf, pos)
+            yield from iter_bntx_containers(decoded, f"{label}#Yaz0@0x{pos:x}", errors, depth + 1)
+        except (BNTXError, struct.error) as exc:
+            errors.append(f"{label}#Yaz0@0x{pos:x}: {exc}")
+        pos += 4
+
 def _load_romfs():
     spec = importlib.util.spec_from_file_location("dm_romfs_scan", ROMFS_MODULE)
     module = importlib.util.module_from_spec(spec)
@@ -233,33 +314,20 @@ def scan(root, out_dir):
                 stream.seek(0)
                 mapped = fs.mmap.mmap(stream.fileno(), 0, access=mmap.ACCESS_READ)
                 try:
-                    pos = 0
-                    while True:
-                        pos = mapped.find(b"BNTX", pos)
-                        if pos < 0:
-                            break
-                        if bytes(mapped[pos:pos + 8]) != MAGIC:
-                            pos += 4
-                            continue
-                        try:
-                            parsed = parse_bntx(mapped, pos, file_path)
-                        except (BNTXError, struct.error) as exc:
-                            errors.append(f"{file_path}@0x{pos:x}: {exc}")
-                            pos += 4
-                            continue
+                    for blob, base, blob_label, parsed in iter_bntx_containers(mapped, file_path, errors):
                         containers += 1
                         for tex in parsed["textures"]:
                             textures_seen += 1
                             if not tex["eligible"]:
                                 skipped_layouts += 1
                                 continue
-                            stem = _safe(f"{Path(file_path).name}_{pos:x}_{tex['index']}_{tex['name']}")
+                            stem = _safe(f"{Path(blob_label).name}_{base:x}_{tex['index']}_{tex['name']}")
                             common = {"mip_offsets": tex["mip_offsets"], "nvn": tex["nvn"]}
                             if not tex["runtime_only"]:
                                 source_name = f"{stem}.bin"
                                 source_path = source_dir / source_name
                                 start = tex["data_offset"]
-                                source_path.write_bytes(bytes(mapped[start:start + tex["image_size"]]))
+                                source_path.write_bytes(bytes(blob[start:start + tex["image_size"]]))
                                 common.update({
                                     "source": f"sources/{source_name}",
                                     "offset": 0,
@@ -272,7 +340,6 @@ def scan(root, out_dir):
                                         "id": ident, "mip": mip, "layer": layer,
                                         **common,
                                     })
-                        pos += parsed["size"]
                 finally:
                     mapped.close()
         except (OSError, ValueError, BufferError) as exc:
