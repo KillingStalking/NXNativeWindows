@@ -75,15 +75,34 @@ class OfflineBC(unittest.TestCase):
                 self.assertEqual(dst_size.value, 16)
                 self.assertNotEqual(dst.raw, bytes(16))
 
-    def test_runtime_only_formats_are_rejected(self):
+    def test_runtime_only_formats_are_skipped_without_reading_source(self):
+        for fmt in ("BC4", "BC4_S", "BC5", "BC5_S", "BC6H_S", "BC6H_U"):
+            with self.subTest(format=fmt):
+                entry = {"id": fmt, "format": fmt, "mip": 0, "layer": 0}
+                result = pack.convert_entry(entry, Path("."), Path("out"), self.decode)
+                self.assertTrue(result["skipped"])
+                self.assertEqual(result["format"], fmt)
+
+    def test_nvn_runtime_only_formats_are_skipped(self):
+        for nvn_format in (0x49, 0x4A, 0x4B, 0x4C, 0x4F, 0x50):
+            with self.subTest(nvn_format=hex(nvn_format)):
+                entry = {"id": hex(nvn_format), "nvn": {"format": hex(nvn_format)}}
+                result = pack.convert_entry(entry, Path("."), Path("out"), self.decode)
+                self.assertTrue(result["skipped"])
+
+    def test_nvn_mip_offsets_match_repo_layout(self):
+        offset = self.decode.level_offset(1, 0x44, 0, 1, 64, 64, 1, 4, 0, 0, 0)
+        self.assertEqual(offset, 0)
+        wrong = {"id": "bad-layout", "source": "unused.bin", "offset": 0,
+                 "storage_size": 65536, "mip": 0, "layer": 0,
+                 "mip_offsets": [0, 123, 456, 789],
+                 "nvn": {"target": 1, "format": "0x44", "width": 64, "height": 64,
+                         "depth": 1, "levels": 4, "samples": 1}}
         with tempfile.TemporaryDirectory() as td:
             base = Path(td)
-            (base / "unused.bin").write_bytes(b"")
-            for fmt in ("BC4", "BC5", "BC6H"):
-                with self.subTest(format=fmt):
-                    entry = {"id": fmt, "format": fmt, "width": 4, "height": 4, "source": "unused.bin"}
-                    with self.assertRaisesRegex(ValueError, "intentionally left to the runtime decoder"):
-                        pack.convert_entry(entry, base, base / "out", self.decode)
+            (base / "unused.bin").write_bytes(bytes(65536))
+            with self.assertRaisesRegex(ValueError, "do not match"):
+                pack.convert_entry(wrong, base, base / "out", self.decode)
 
 
 if __name__ == "__main__":
