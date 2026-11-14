@@ -340,7 +340,9 @@ static void mem_flush(const char *why, size_t left) {
 static void mem_sample(int event) {
     static double calm_since; static int last_logged = -1;
     size_t left = os_proc_available_memory();
-    if (!left) return;   // not limited (a Mac)
+    // On iOS, zero means there is no reported headroom, not that memory is unlimited.
+    // Treat it as critical pressure; returning here would silently disable the guard
+    // at exactly the point where it is needed most.
     int lv = atomic_load(&g_mem_level), was = lv;
     if (left < (300u << 20) || event == 2) lv = 2;
     else if (left < (600u << 20) || event == 1) lv = lv > 1 ? lv : 1;
