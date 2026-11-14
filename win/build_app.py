@@ -404,11 +404,12 @@ def main():
         # into the app's Documents (dm/ios/Sources/main.m looks for <Documents>/romfs and <Documents>/<folder>/romfs, and takes msl/ and aoc/ beside it)
         data = Path(split) if split not in ('1', 'YES') else out_ipa.with_name(out_ipa.stem + '-data')
         split_stamp = f'game\t{game}\nbundle_id\t{bundle_id}\nversion\t{version}\nchain\t{v}\ngfx\t{gfx}\n'
-        if bc_offline:
-            digest = hashlib.sha256()
-            with (bc_offline / 'bc_offline_pack.bin').open('rb') as pack_file:
-                for chunk in iter(lambda: pack_file.read(1024 * 1024), b''): digest.update(chunk)
-            split_stamp += f'bc_offline_sha256\t{digest.hexdigest()}\n'
+        if bc_offline is not None:
+            for pack_name in ('bc_offline_pack.bin', 'bc_offline_pack.json'):
+                digest = hashlib.sha256()
+                with (bc_offline / pack_name).open('rb') as pack_file:
+                    for chunk in iter(lambda: pack_file.read(1024 * 1024), b''): digest.update(chunk)
+                split_stamp += f'bc_offline_{pack_name}_sha256\t{digest.hexdigest()}\n'
         split_parts = {'romfs': romfs, f'msl/{msldir}': msl_ios / msldir}
         if has_aoc: split_parts['aoc'] = aoc
         if bc_offline is not None: split_parts['bc_offline_pack'] = bc_offline
