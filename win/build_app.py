@@ -391,7 +391,7 @@ def main():
     (app / 'PkgInfo').write_bytes(b'APPL????')
 
     has_aoc = bool(aoc and aoc.is_dir() and any(aoc.iterdir()))
-    if has_aoc: t('add-on content: ' + ' '.join(sorted(p.name for p in aoc.iterdir())))
+    if aoc is not None and has_aoc: t('add-on content: ' + ' '.join(sorted(p.name for p in aoc.iterdir())))
     split = env.get('NXW_SPLIT_DATA', '')
     maps = [f'Payload/DmIOS.app={app}']
     if pso: maps.append(f'Payload/DmIOS.app/pso={pso}')
