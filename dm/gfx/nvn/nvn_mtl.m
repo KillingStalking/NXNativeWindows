@@ -2195,7 +2195,8 @@ static NSDictionary *bc_offline_bundle(const tex_t *t, NSUInteger levels, unsign
         for (unsigned layer = 0; layer < layers; layer++) {
             NSString *lookup = [NSString stringWithFormat:@"%@:%lu:%u", key_text, (unsigned long)mip, layer];
             NSDictionary *e = map[lookup];
-            if (!e || ![e[@"astc_format"] isEqualToString:expected_format] ||
+            if (!e || ![e[@"mip_offsets_validated"] boolValue] ||
+                ![e[@"astc_format"] isEqualToString:expected_format] ||
                 [e[@"width"] unsignedIntValue] != w || [e[@"height"] unsignedIntValue] != h ||
                 [e[@"row_pitch"] unsignedLongLongValue] != row ||
                 [e[@"size"] unsignedLongLongValue] != expected_size ||
