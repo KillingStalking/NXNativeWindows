@@ -27,12 +27,13 @@ def main():
     # --split-data [DIR]: a small IPA with only the app, and the game files + shader libraries in a data folder copied into the app's Documents
     # (--split-data=DIR names the folder; default <IPA name>-data beside the IPA). Taken out here: the upstream argument parser does not know it; win/build_app.py reads NXW_SPLIT_DATA
     if '-h' in sys.argv or '--help' in sys.argv:
-        print('Windows options:\n  --split-data[=DIR]  small IPA (app only) + a data folder (game files, shaders) to copy into the app\'s Documents\n  --no-split-data     one IPA with everything inside (default)\n')
+        print('Windows options:\n  --split-data[=DIR]  small IPA (app only) + a data folder (game files, shaders) to copy into the app\'s Documents\n  --no-split-data     one IPA with everything inside (default)\n  --offline-bc        scan the extracted RomFS and build an offline ASTC sidecar automatically\n')
     rest = []
     for a in sys.argv[1:]:
         if a == '--split-data': os.environ['NXW_SPLIT_DATA'] = '1'
         elif a.startswith('--split-data='): os.environ['NXW_SPLIT_DATA'] = str(Path(a.split('=', 1)[1]).resolve())
         elif a == '--no-split-data': os.environ['NXW_SPLIT_DATA'] = '0'
+        elif a == '--offline-bc': os.environ['DM_BC_OFFLINE_AUTO'] = '1'
         elif a == '--entitlements': os.environ['NXW_ENTITLEMENTS'] = '1'   # an ad-hoc signature asking for Increased Memory Limit (win/macho_sign.py)
         elif a == '--no-entitlements': os.environ['NXW_ENTITLEMENTS'] = '0'   # an unsigned executable, as before
         else: rest.append(a)
