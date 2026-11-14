@@ -45,7 +45,7 @@ static int romfs_identity_accepts(NSString *img) {
     return rc == ROMFS_ID_OK || rc == ROMFS_ID_NONE;
 }
 static NSString *romfs_locate(void) {
-    NSFileManager *fm = NSFileManager.defaultManager;
+    NSFileManager *fm = [NSFileManager defaultManager];
     NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
     NSString *img = [doc stringByAppendingPathComponent:@"romfs.img"];
     if (romfs_image_complete(img) && romfs_identity_accepts(img)) {
