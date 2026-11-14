@@ -87,6 +87,25 @@ static NSString *data_dir(NSString *name) {
     return [res stringByAppendingPathComponent:name];
 }
 
+
+static NSString *bc_offline_dir(void) {
+    NSFileManager *fm = NSFileManager.defaultManager;
+    NSString *doc = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES)[0];
+    NSString *res = NSBundle.mainBundle.resourcePath;
+    NSString *candidates[3] = {
+        [doc stringByAppendingPathComponent:@"bc_offline_pack"],
+        g_data_root ? [g_data_root stringByAppendingPathComponent:@"bc_offline_pack"] : nil,
+        [res stringByAppendingPathComponent:@"bc_offline_pack"]
+    };
+    for (int i = 0; i < 3; i++) {
+        NSString *p = candidates[i];
+        if (!p) continue;
+        if ([fm fileExistsAtPath:[p stringByAppendingPathComponent:@"bc_offline_pack.json"]] &&
+            [fm fileExistsAtPath:[p stringByAppendingPathComponent:@"bc_offline_pack.bin"]]) return p;
+    }
+    return nil;
+}
+
 // Boot prerequisites (done before UIApplicationMain): directories / environment variables / log -- the host's early load reads these
 // Why a slim build found no usable game files: the verdict on Documents/romfs.img, in the log and for the screen (front_ios_boot_message). NULL when the build has no romfs.id
 static char g_boot_message[640];
@@ -159,7 +178,14 @@ static int boot_env(void) {
     setenv("DM_TEMP", [doc stringByAppendingPathComponent:@"temp"].fileSystemRepresentation, 0);
     NSString *dm = [res stringByAppendingPathComponent:@"dm"];
     setenv("DM_NVN_SHMAP", [dm stringByAppendingPathComponent:@"shader_map.tsv"].fileSystemRepresentation, 0);
-    setenv("DM_MSL_DIR", data_dir(@"msl").fileSystemRepresentation, 0);   // a split build keeps the shader libraries with the game files
+    setenv("DM_MSL_DIR", data_dir(@"msl").fileSystemRepresentation, 0);   // a split build keeps the shader libraries with the game
+    if (!getenv("DM_BC_OFFLINE_PACK")) {
+        NSString *bcpack = bc_offline_dir();
+        if (bcpack) {
+            setenv("DM_BC_OFFLINE_PACK", bcpack.fileSystemRepresentation, 0);
+            fprintf(stderr, "boot: offline ASTC sidecar %s\\n", bcpack.fileSystemRepresentation);
+        }
+    } files
     fprintf(stderr, "boot: shader libraries %s\n", data_dir(@"msl").fileSystemRepresentation);
     setenv("DM_FONT_DIR", [dm stringByAppendingPathComponent:@"font"].fileSystemRepresentation, 0);   // Shared-font stand-ins (standard.ttf / nintendo_ext.ttf): iOS lacks the macOS font path
     NSString *aoc = data_dir(@"aoc");   // add-on content: build_ipa.sh puts the RomFS extracted from the player's DLC NSPs at <App>/aoc/<index>/
