@@ -3,12 +3,24 @@
   "textures": [
     {
       "id": "example_bc3_mip0_layer0",
-      "format": "BC3",
-      "width": 256,
-      "height": 256,
-      "source": "linear/example_bc3.bin",
+      "source": "texture_storage.bin",
+      "offset": 0,
+      "storage_size": 1048576,
       "mip": 0,
-      "layer": 0
+      "layer": 0,
+      "nvn": {
+        "target": 1,
+        "format": "0x44",
+        "flags": 0,
+        "samples": 1,
+        "width": 256,
+        "height": 256,
+        "depth": 1,
+        "levels": 9,
+        "stride": 0,
+        "pkg_layout": 0,
+        "switch2": false
+      }
     }
   ]
 }
