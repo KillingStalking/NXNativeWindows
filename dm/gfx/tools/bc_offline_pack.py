@@ -333,6 +333,7 @@ def bundle_results(results: list[dict], out_dir: Path) -> Path:
                 item["pack_offset"] = offset
                 item["pack_size"] = len(data)
                 item["pack_file"] = pack_path.name
+                item.pop("output", None)
                 source.unlink()
         os.replace(tmp_path, pack_path)
     except BaseException:
