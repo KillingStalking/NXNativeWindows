@@ -17,6 +17,7 @@ void dm_gamepad_reset(void);
 void dm_gamepad_opmode_changed(void);
 void dm_gamepad_touch_feedback(bool on);
 void front_ios_boot(void);
+void front_ios_preload_start(void);   // start after launcher settings, before the first Metal device
 int front_ios_boot_ok(void);
 const char *front_ios_boot_message(void);   // main.m: why a build that keeps the game files off the IPA found none usable (NULL = the generic hint)
 bool dm_show_launcher(void *view_controller, void (*done)(void));   // Launcher.swift: false = no launcher (no dm/launcher.json, or DM_LAUNCHER=0)
@@ -68,10 +69,11 @@ static void launcher_done(void) { [g_root startGame]; }
     }
     front_ios_audio_watch();
 }
-// The game view, the pad and the frame-rate counter are made once the launcher has set the switches they read (DM_SHOW_FPS, DM_METAL_HUD); the host's loading began at app launch (main.m)
+// The launcher sets DM_METAL_HUD on Play. Apply it and start the host preload before creating the first Metal device.
 - (void)startGame {
     if (self.game) return;
-    front_hud_env();   // apply launcher / env-file switches before starting the game
+    front_hud_env();   // apply launcher / env-file switches before any Metal device is made
+    front_ios_preload_start();
     self.game = [[DmGameView alloc] initWithFrame:self.view.bounds];
     [self.view addSubview:self.game];
     g_layer = (CAMetalLayer *)self.game.layer;

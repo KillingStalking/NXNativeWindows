@@ -168,10 +168,18 @@ static int boot_env(void) {
     if ([fm fileExistsAtPath:pso]) setenv("DM_PSO_BUNDLE", pso.fileSystemRepresentation, 0);
     chdir(doc.fileSystemRepresentation);
     g_argv[0] = strdup("dmhost"); g_argv[1] = strdup(dm.fileSystemRepresentation); g_argc = 2;
-    dm_host_preload_start(g_argc, g_argv);   // Module tables / relocation / takeover run early in the background, in parallel with UIKit startup (and the launcher: the settings it sets are read when the game starts)
     return 1;
 }
 static int g_boot_ok;
+static int g_preload_started;
+
+// The launcher applies DM_METAL_HUD when the player presses Play. Start the host preload only after that,
+// so MTL_HUD_ENABLED and the other Metal HUD switches are in place before the first Metal device exists.
+void front_ios_preload_start(void) {
+    if (!g_boot_ok || g_preload_started) return;
+    g_preload_started = 1;
+    dm_host_preload_start(g_argc, g_argv);
+}
 
 static void *boot_thread(void *p) {
     (void)p;
