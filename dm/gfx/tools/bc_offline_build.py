@@ -57,7 +57,7 @@ def main() -> int:
     print("[BC-OFFLINE] complete")
     print(f"  scan report: {scan_out / 'bntx_scan_summary.json'}")
     print(f"  runtime pack: {pack_out}")
-    print(f"  install folder: copy bc_offline_pack/ into the game's split-data folder or app resources")
+    print("  install folder: copy bc_offline_pack/ into the game's split-data folder or app resources")
     return 0
 
 
