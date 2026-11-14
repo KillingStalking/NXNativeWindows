@@ -267,6 +267,8 @@ def iter_bntx_containers(buf, label, errors, depth=0):
 
 def _load_romfs():
     spec = importlib.util.spec_from_file_location("dm_romfs_scan", ROMFS_MODULE)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"cannot load RomFS helper at {ROMFS_MODULE}")
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -381,4 +383,4 @@ if __name__ == "__main__":
         raise SystemExit(main())
     except (OSError, ValueError, BNTXError, struct.error) as exc:
         print(f"[BNTX-BC-SCAN] FAIL: {exc}", file=sys.stderr)
-        raise SystemExit(1)
+        raise SystemExit(1) from exc
