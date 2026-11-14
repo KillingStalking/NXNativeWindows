@@ -236,7 +236,7 @@ def library_map(arc, src, skip_suffix, out, shader_files=False):
     """Map a packed NVN library at its required archive name. A b-<chain>.img is
     stored as msl/b-<chain>.img, not as a file named msl/b-<chain>. Folder builds
     remain folders. When the app omits _bp libraries, make a filtered image."""
-    if not re.fullmatch(r'.*/msl/(p\\d+/)?b-[^/]+', arc) or not str(shader_lib.view(src)).endswith('.img'):
+    if not re.fullmatch(r'.*/msl/(p\d+/)?b-[^/]+', arc) or not str(shader_lib.view(src)).endswith('.img'):
         return arc, src
     if shader_lib.PULLING not in skip_suffix and shader_lib.left_out_pulling(src):
         sys.exit(f'[RED] pack_ipa: {shader_lib.image_of(src)} has no pulling vertex libraries, and this app needs them: rebuild the shader library')
