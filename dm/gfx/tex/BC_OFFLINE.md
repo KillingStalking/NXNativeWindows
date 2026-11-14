@@ -1,97 +1,66 @@
 # Offline BC texture pack (experimental)
 
-This branch adds an offline transcoding stage for BC1/BC2/BC3/BC7. It reuses the existing BC1–3 integer transcoder, BC7 software decoder, ASTC encoder, and NVN texture layout/deswizzle implementation.
+This branch contains an offline BC texture conversion prototype. It reuses the repository's BC1–3 integer transcoder, BC7 software decoder, ASTC encoder, and NVN texture layout/deswizzle implementation.
 
-## Current scope
+## Format policy
 
 - BC1 / BC1 sRGB -> ASTC 4x4.
 - BC2 / BC2 sRGB -> ASTC 4x4.
 - BC3 / BC3 sRGB -> ASTC 4x4.
-- BC7 / BC7 sRGB -> BC7 software decode, then ASTC 4x4 LDR encode.
-- BC4 / BC5 / BC6H are rejected intentionally; they remain on the runtime decoder.
+- BC7 / BC7 sRGB -> software decode, then ASTC 4x4 LDR encoding.
+- BC4 / BC5 / BC6H are recorded as runtime-only entries and are not converted.
 
-The converter writes one raw ASTC block stream per manifest entry and a JSON index. It never modifies the NSP, RomFS, or source files. Give each mip level and array/cubemap face its own entry.
+The original game files are read-only. The scanner extracts each eligible BNTX texture allocation into a separate source file; the packer writes raw ASTC block streams and a JSON index.
 
-## NVN block-linear input manifest (recommended)
+## Automatic BNTX scan
 
-An NVN entry describes the complete texture storage in the source file. The converter uses nvn_tex_layout / nvn_deswizzle to extract the requested mip and layer before transcoding. Provide the actual NVN texture descriptor values, including pkg_layout when the game supplied a packaged layout. The source range must contain the whole texture allocation (all mips and layers), not just one BC subresource.
+The scanner walks an extracted RomFS directory or the repository's read-only `RomFS.img` view. It looks for BNTX containers embedded in files and also scans Yaz0-compressed payloads, including compressed SARC members. It does not currently decompress every possible game archive/compression format.
 
-```json
-{
-  "version": 1,
-  "textures": [
-    {
-      "id": "example_bc3_mip0_layer0",
-      "source": "texture_storage.bin",
-      "offset": 0,
-      "storage_size": 1048576,
-      "mip": 0,
-      "layer": 0,
-      "nvn": {
-        "target": 1,
-        "format": "0x44",
-        "flags": 0,
-        "samples": 1,
-        "width": 256,
-        "height": 256,
-        "depth": 1,
-        "levels": 9,
-        "stride": 0,
-        "pkg_layout": 0,
-        "switch2": false
-      }
-    }
-  ]
-}
-```
-
-NVN format codes recognized by the tool: 0x41/0x42 BC1, 0x43 BC2, 0x44 BC3, 0x45–0x48 their sRGB variants, 0x4D BC7, and 0x4E BC7 sRGB. BC6H uses 0x4F/0x50 and is intentionally not converted. The texture descriptor's format is authoritative; an optional top-level format label must agree with it.
-
-## Linear input manifest (for tests / already-deswizzled dumps)
-
-An entry without an nvn object expects BC blocks already in linear block-row order. row_pitch is the byte stride between BC block rows and may include padding.
-
-```json
-{
-  "version": 1,
-  "textures": [
-    {
-      "id": "linear_bc3_mip0_layer0",
-      "format": "BC3_SRGB",
-      "width": 1024,
-      "height": 512,
-      "source": "linear/albedo.bc",
-      "offset": 0,
-      "row_pitch": 4096,
-      "mip": 0,
-      "layer": 0
-    }
-  ]
-}
-```
-
-## Run on Windows
-
-The build environment needs Python 3 and the clang + lld toolchain used by the Windows build.
+On Windows:
 
 ```powershell
-python dm/gfx/tools/bc_offline_pack.py --manifest path\to\manifest.json --out path\to\bc_astc_pack
+python dm/gfx/tools/bntx_bc_scan.py --root "D:\games\extracted\RomFS" --out "D:\games\bc_offline"
 ```
 
-If clang is not on PATH, pass --clang with the clang.exe path. A prebuilt compatible DLL can be supplied with --decoder-dll.
+You can also pass the repository's `RomFS.img` directly:
 
-Output:
-- one .astc file per texture subresource (raw ASTC 4x4 blocks; no ASTC file header);
-- bc_offline_pack.json with dimensions, mip/layer, ASTC format, layout, and SHA-256 hashes.
+```powershell
+python dm/gfx/tools/bntx_bc_scan.py --root "D:\games\extracted\RomFS.img" --out "D:\games\bc_offline"
+```
 
-## Integration boundary
+The scanner creates:
+- `bc_offline_manifest.json`: one entry per supported mip and array/cube layer;
+- `sources\*.bin`: extracted source allocations for BC1/2/3/7;
+- `bntx_scan_summary.json`: container, texture, and skip counts.
 
-This is an **offline converter prototype**, not yet an end-to-end game-data replacement feature. It can deswizzle a texture when a correct NVN descriptor and complete storage range are supplied, but it does not yet discover texture descriptors or storage offsets inside NSP/RomFS automatically. It also does not rewrite game descriptors or make the Metal runtime load the sidecar pack. The generated pack is therefore standalone; the game continues using the existing runtime decoder.
+It preserves BNTX channel mapping, mip pointer offsets, texture dimensions, array/cube shape, and the packaged layout bytes. Before conversion, the packer compares every BNTX mip pointer offset against `nvn_tex_level_offset()`. A mismatch is a hard error: that texture is not converted using a guessed layout.
 
-Next stages:
-1. Add a scanner for the supported game texture containers (including BNTX where applicable) to produce correct NVN descriptors and storage offsets.
-2. Validate sparse, packaged-layout, array/cubemap, mip-tail, and Switch 2 cases against real game textures.
-3. Add a stable runtime resource key and sidecar lookup with the original BC upload as a fallback.
-4. Package the sidecar independently of the IPA so the existing split-data flow can carry it.
+## Convert to ASTC
 
-Do not mark a texture for offline conversion unless its descriptor and complete storage range are known. Unsupported layouts must fall back to the runtime path.
+The build environment needs Python 3 and clang. The helper builds a small native library from this repository's C sources (a Windows DLL on Windows; a native test library on macOS/Linux).
+
+```powershell
+python dm/gfx/tools/bc_offline_pack.py --manifest "D:\games\bc_offline\bc_offline_manifest.json" --out "D:\games\bc_offline\astc"
+```
+
+If clang is not on PATH, pass `--clang C:\path\to\clang.exe`. A compatible prebuilt library can be supplied with `--decoder-dll`.
+
+The output directory contains:
+- one `.astc` raw block stream per converted texture subresource (no ASTC file header);
+- `bc_offline_pack.json`, including dimensions, mip/layer, NVN layout, original channel mapping, and SHA-256 hashes.
+
+## Supported layout boundary
+
+The automatic scanner currently converts only non-sparse, swizzled BNTX textures with supported 1D/2D/cube/array dimensions and single-sample storage. It skips linear, sparse, 3D, multisample, and unknown texture layouts. BC4/BC5/BC6H are left for the runtime decoder.
+
+The manifest also supports already-linear BC subresources for isolated tests. Such entries must describe BC block-row order and provide a correct `row_pitch`; do not pass Tegra block-linear bytes through the linear-input path.
+
+## Runtime integration still required
+
+This is not yet an end-to-end game-data replacement feature. It currently:
+1. discovers eligible BNTX containers in the scanned filesystem and Yaz0 payloads;
+2. extracts their texture allocations;
+3. validates mip offsets against the repository NVN layout;
+4. transcodes eligible BC subresources into ASTC sidecar files.
+
+It does **not** yet rewrite the game's texture resources, load the ASTC sidecar in the Metal runtime, or package the sidecar into the existing split-data installation flow. The game therefore continues to use its current runtime BC decoder. Do not replace game data with this pack until the runtime lookup/fallback and split-data packaging stages are implemented and tested on real game assets.
