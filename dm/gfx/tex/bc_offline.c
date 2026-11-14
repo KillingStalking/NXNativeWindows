@@ -109,3 +109,16 @@ BC_EXPORT int bc_offline_texture_level(
     *dst_size_out = astc_size;
     return 0;
 }
+
+BC_EXPORT uint64_t bc_offline_level_offset(
+    int target, int nvn_format, int flags, int samples,
+    uint32_t width, uint32_t height, uint32_t depth, uint32_t levels,
+    uint32_t stride, int pkg_layout, uint32_t level) {
+    if (!width || !height || !levels || level >= levels) return UINT64_MAX;
+    nvn_texdesc d = {target, nvn_format, flags, samples, width, height, depth,
+                     levels, stride, pkg_layout};
+    nvn_texlayout layout;
+    nvn_tex_layout(&d, &layout);
+    if (!layout.size) return UINT64_MAX;
+    return nvn_tex_level_offset(&d, level);
+}
