@@ -2138,7 +2138,7 @@ static void bc_offline_load_locked(void) {
     if (g_bc_offline_loaded) return;
     g_bc_offline_loaded = 1;
     const char *env = getenv("DM_BC_OFFLINE_PACK");
-    NSString *root = env && *env ? @(env) : exe_rel("../games/" DM_GAME_ID "/bc_offline_pack");
+    NSString *root = env && *env ? [NSString stringWithUTF8String:env] : exe_rel("../games/" DM_GAME_ID "/bc_offline_pack");
     if (!root) return;
     BOOL is_dir = NO;
     if ([[NSFileManager defaultManager] fileExistsAtPath:root isDirectory:&is_dir] && !is_dir)
