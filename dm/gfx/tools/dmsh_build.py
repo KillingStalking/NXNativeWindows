@@ -978,7 +978,22 @@ def rec_of(key):
         sys.exit(f'[RED] {name} holds no record of shader {key}, which the shader map names: the package and the map come from different shader_split.py runs{old}; '
                  f'split the shaders again (the NSP script does when {dm_dir} is removed)')
     o, e = recs[key]
-    return name, read_at(fd, e - o, o)
+    try:
+        return name, read_at(fd, e - o, o)
+    except OSError as exc:
+        # Include enough context to distinguish a package that changed after
+        # record_index() from a short read against an unchanged file handle.
+        fd_stat = os.fstat(fd)
+        try:
+            path_stat = os.stat(os.path.join(dm_dir, name))
+            path_info = f", path_size={path_stat.st_size:#x}, path_mtime_ns={path_stat.st_mtime_ns}"
+        except OSError as stat_exc:
+            path_info = f", path_stat_error={stat_exc}"
+        raise OSError(
+            f"{exc}; package={os.path.join(dm_dir, name)}, shader={key}, "
+            f"record=[{o:#x},{e:#x}), fd_size={fd_stat.st_size:#x}, "
+            f"fd_mtime_ns={fd_stat.st_mtime_ns}{path_info}"
+        ) from exc
 for key in keys: digests[key] = shader_key(key, *rec_of(key))
 def plain_digest(k):   # a paired pixel shader's key, also when it is not built this time
     if k in digests: return digests[k]
