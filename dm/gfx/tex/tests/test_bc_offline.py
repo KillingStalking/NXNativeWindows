@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-"""Smoke tests for the offline BC -> ASTC pack entry point (Windows + clang/lld)."""
+"""Smoke tests for the offline BC -> ASTC pack entry point."""
 import ctypes
 import importlib.util
-import os
 import random
 import shutil
 import tempfile
@@ -20,8 +19,11 @@ class OfflineBC(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         cls.temp = tempfile.TemporaryDirectory(prefix="bc-offline-test-")
-        dll = pack.build_decoder(shutil.which("clang"), Path(cls.temp.name))
-        cls.decode = pack.load_decoder(dll)
+        clang = shutil.which("clang")
+        if clang is None:
+            raise unittest.SkipTest("clang is unavailable")
+        library = pack.build_decoder(clang, Path(cls.temp.name))
+        cls.decode = pack.load_decoder(library)
 
     @classmethod
     def tearDownClass(cls):
@@ -103,6 +105,31 @@ class OfflineBC(unittest.TestCase):
             (base / "unused.bin").write_bytes(bytes(65536))
             with self.assertRaisesRegex(ValueError, "do not match"):
                 pack.convert_entry(wrong, base, base / "out", self.decode)
+
+
+    def test_valid_bntx_mip_offsets_are_accepted(self):
+        width, height, levels = 64, 64, 4
+        offsets = [
+            int(self.decode.level_offset(1, 0x44, 0, 1, width, height, 1, levels, 0, 0, mip))
+            for mip in range(levels)
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            base = Path(td)
+            (base / "texture.bin").write_bytes(bytes(65536))
+            entry = {
+                "id": "valid-bntx-layout", "source": "texture.bin",
+                "storage_size": 65536, "mip": 0, "layer": 0,
+                "mip_offsets": offsets,
+                "nvn": {
+                    "target": 1, "format": "0x44", "width": width, "height": height,
+                    "depth": 1, "levels": levels, "samples": 1, "flags": 0,
+                    "stride": 0, "pkg_layout": 0,
+                },
+            }
+            result = pack.convert_entry(entry, base, base / "out", self.decode)
+            self.assertFalse(result.get("skipped", False))
+            self.assertTrue(result["mip_offsets_validated"])
+            self.assertEqual(result["size"], 4096)
 
 
 if __name__ == "__main__":
