@@ -165,7 +165,75 @@ static int increased_memory_limit(void);
         setenv(s.env.UTF8String, v.UTF8String, 1); fprintf(stderr, "launcher: %s=%s%s\n", s.env.UTF8String, v.UTF8String, def ? "" : " (changed)");
     }
 }
+- (void)choose:(DmSetting *)s value:(NSString *)v {
+    if ([self locked:s] || ![s accepts:v]) return;
+    self.values[s.env] = v;
+    NSUserDefaults *ud = NSUserDefaults.standardUserDefaults;
+    NSString *key = [@"launcher." stringByAppendingString:s.env];
+    if ([s isDefault:v]) [ud removeObjectForKey:key]; else [ud setObject:v forKey:key];
+    setenv(s.env.UTF8String, v.UTF8String, 1);
+    fprintf(stderr, "launcher: %s=%s (in-game menu)\n", s.env.UTF8String, v.UTF8String);
+}
 @end
+
+static DmLauncherModel *g_game_menu_model;
+extern int dm_pad_layout(void);
+extern bool dm_pad_layout_offered(int layout);
+extern void dm_pad_layout_set(int layout);
+extern bool dm_setting_live(const char *env, const char *value);
+
+static UIMenuElement *game_menu_setting(DmLauncherModel *m, DmSetting *s) {
+    NSString *now = [m value:s]; BOOL fixed = [m locked:s];
+    UIMenuElementAttributes attrs = fixed ? UIMenuElementAttributesDisabled : UIMenuElementAttributesNone;
+    __weak DmLauncherModel *weakModel = m;
+    if ([s.kind isEqualToString:@"toggle"]) {
+        UIAction *a = [UIAction actionWithTitle:s.label image:nil identifier:nil handler:^(UIAction *action) {
+            DmLauncherModel *model = weakModel; if (!model) return;
+            NSString *next = [now isEqualToString:s.onValue] ? s.offValue : s.onValue;
+            [model choose:s value:next]; (void)dm_setting_live(s.env.UTF8String, next.UTF8String);
+        }];
+        a.attributes = attrs; a.state = [now isEqualToString:s.onValue] ? UIMenuElementStateOn : UIMenuElementStateOff;
+        if (fixed) a.subtitle = @"Set in env.txt";
+        return a;
+    }
+    NSMutableArray<UIMenuElement *> *choices = [NSMutableArray array];
+    for (NSArray<NSString *> *option in s.options ?: @[]) {
+        NSString *v = option[0], *label = option[1];
+        UIAction *a = [UIAction actionWithTitle:label image:nil identifier:nil handler:^(UIAction *action) {
+            DmLauncherModel *model = weakModel; if (!model) return;
+            [model choose:s value:v]; (void)dm_setting_live(s.env.UTF8String, v.UTF8String);
+        }];
+        a.attributes = attrs; a.state = [v isEqualToString:now] ? UIMenuElementStateOn : UIMenuElementStateOff;
+        [choices addObject:a];
+    }
+    NSString *current = [m choiceLabel:s];
+    return [UIMenu menuWithTitle:s.label subtitle:fixed ? [current stringByAppendingString:@", set in env.txt"] : nil image:nil identifier:nil options:UIMenuOptionsSingleSelection children:choices];
+}
+
+void *dm_game_menu(void) {
+    NSArray<NSString *> *names = @[@"2D", @"3D", @"Tap"];
+    NSMutableArray<UIMenuElement *> *layouts = [NSMutableArray array];
+    for (int i = 0; i < 3; i++) if (dm_pad_layout_offered(i)) {
+        UIAction *a = [UIAction actionWithTitle:names[i] image:nil identifier:nil handler:^(UIAction *action) { dm_pad_layout_set(i); }];
+        a.state = dm_pad_layout() == i ? UIMenuElementStateOn : UIMenuElementStateOff;
+        [layouts addObject:a];
+    }
+    UIMenu *layout = [UIMenu menuWithTitle:@"Controller layout" image:nil identifier:nil options:UIMenuOptionsSingleSelection children:layouts];
+    NSMutableArray<UIMenuElement *> *items = [NSMutableArray array]; BOOL placed = NO;
+    DmLauncherModel *m = g_game_menu_model;
+    if (m) for (NSString *section in m.sections) {
+        NSMutableArray<UIMenuElement *> *rows = [NSMutableArray array];
+        if ([section isEqualToString:@"Controls"]) { [rows addObject:layout]; placed = YES; }
+        for (DmSetting *setting in [m inSection:section])
+            if (([setting.kind isEqualToString:@"choice"] || [setting.kind isEqualToString:@"toggle"]) && dm_setting_live(setting.env.UTF8String, NULL))
+                [rows addObject:game_menu_setting(m, setting)];
+        if (rows.count) [items addObject:[UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:rows]];
+    }
+    if (!placed) [items insertObject:[UIMenu menuWithTitle:@"" image:nil identifier:nil options:UIMenuOptionsDisplayInline children:@[layout]] atIndex:0];
+    NSString *title = m ? @"More settings on the start screen" : @"";
+    UIMenu *menu = [UIMenu menuWithTitle:title children:items];
+    return (__bridge_retained void *)menu;
+}
 
 static UILabel *body_label(NSString *text) {
     UILabel *l = [UILabel new]; l.text = text; l.font = [UIFont preferredFontForTextStyle:UIFontTextStyleBody]; l.textColor = UIColor.labelColor; l.numberOfLines = 0;
@@ -419,6 +487,7 @@ bool dm_show_launcher(void *view_controller, void (*done)(void)) {
     if (!settings.count) { fprintf(stderr, "[RED] launcher: dm/launcher.json cannot be read; starting the game\n"); return false; }
     UIViewController *parent = (__bridge UIViewController *)view_controller;
     DmLauncherModel *model = [[DmLauncherModel alloc] initWith:settings];
+    g_game_menu_model = model;
     DmLauncherVC *vc = [DmLauncherVC new]; vc.m = model; vc.modalPresentationStyle = UIModalPresentationFullScreen;
     __weak DmLauncherVC *wvc = vc; __block BOOL started = NO;
     vc.play = ^{
