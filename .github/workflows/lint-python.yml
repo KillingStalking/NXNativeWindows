@@ -46,5 +46,19 @@ jobs:
         run: git fetch --no-tags --depth=1 origin "$GITHUB_BASE_REF"
       - name: Targeted BC tool type diagnostics
         run: python -m pyright dm/gfx/tools/bc_offline_pack.py dm/gfx/tools/bntx_bc_scan.py dm/gfx/tools/bc_offline_build.py dm/gfx/tex/tests/test_bc_offline.py dm/gfx/tex/tests/test_bntx_bc_scan.py dm/ios/tools/gen_resources.py
+      - name: Inspect changed-file Ruff diagnostics
+        run: |
+          python -m ruff check --output-format concise dm/gfx/tools/bc_offline_pack.py dm/gfx/tools/bntx_bc_scan.py dm/gfx/tools/bc_offline_build.py dm/gfx/tex/tests/test_bc_offline.py dm/gfx/tex/tests/test_bntx_bc_scan.py dm/ios/tools/gen_resources.py win/build_app.py || true
+      - name: Inspect optional build_app type diagnostics
+        run: |
+          python -m pyright win/build_app.py --outputjson > /tmp/pyright-win.json || true
+          python - <<'PY'
+          import json
+          report = json.load(open('/tmp/pyright-win.json', encoding='utf-8'))
+          for item in report.get('generalDiagnostics', []):
+              if 'iterable' in item.get('message', '').lower():
+                  line = item['range']['start']['line'] + 1
+                  print(f"{item['file']}:{line}: {item['message']}")
+          PY
       - name: ruff and pyright against the baseline
         run: python dm/tools/lint_python.py ${{ github.event_name == 'pull_request' && '--against FETCH_HEAD' || '' }}
