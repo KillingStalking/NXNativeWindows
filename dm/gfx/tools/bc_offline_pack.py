@@ -34,7 +34,7 @@ FORMATS = {
 NVN_FORMATS = {
     0x41: "BC1", 0x42: "BC1", 0x43: "BC2", 0x44: "BC3",
     0x45: "BC1_SRGB", 0x46: "BC1_SRGB", 0x47: "BC2_SRGB", 0x48: "BC3_SRGB",
-    0x4F: "BC7", 0x50: "BC7_SRGB",
+    0x4D: "BC7", 0x4E: "BC7_SRGB",
 }
 
 
