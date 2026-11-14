@@ -7,6 +7,8 @@ from pathlib import Path
 
 SCRIPT = Path(__file__).resolve().parents[2] / "tools" / "bntx_bc_scan.py"
 spec = importlib.util.spec_from_file_location("bntx_bc_scan", SCRIPT)
+if spec is None or spec.loader is None:
+    raise RuntimeError(f"cannot load BNTX scanner at {SCRIPT}")
 scan = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(scan)
 
