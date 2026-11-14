@@ -28,6 +28,14 @@ def main():
     ios, romfs, marker, shaders, msldir, aoc, derived, chain_h, *rest = sys.argv[1:]
     pso = rest[0] if rest else ''   # the pipeline archive made offline (build_ipa.sh, dm/gfx/tools/pso_offline.py), or none
     programs = rest[1:]   # a game of several programs: the table of each one's files (build_ipa.sh)
+    bc_offline = os.environ.get('DM_BC_OFFLINE_PACK', '')
+    if bc_offline:
+        bc_path = Path(bc_offline)
+        if bc_path.is_file():
+            bc_path = bc_path.parent
+        if not (bc_path / 'bc_offline_pack.json').is_file() or not (bc_path / 'bc_offline_pack.bin').is_file():
+            raise SystemExit(f'BC offline pack is incomplete: {bc_path} needs bc_offline_pack.json and bc_offline_pack.bin')
+        bc_offline = str(bc_path.resolve())
     ios = Path(ios)
     paths = {
         'DM_RESOURCE_ROMFS': str(Path(romfs).resolve()),
@@ -37,6 +45,8 @@ def main():
         'DM_RESOURCE_AOC': str(Path(aoc).resolve()) if aoc and Path(aoc).is_dir() else '',
         'DM_RESOURCE_CHAIN_H': str(Path(chain_h).resolve()),   # dm/gfx/nvn/dmsh_chain.h, which the host is compiled with (one chain version for every game)
         'DM_RESOURCE_PSO': str(Path(pso).resolve()) if pso and Path(pso).is_dir() else '',   # → <App>/pso, which the app hands the host as DM_PSO_BUNDLE
+        'DM_RESOURCE_BC_OFFLINE_PACK': bc_offline,   # → <App>/bc_offline_pack or Documents/bc_offline_pack
+        'DM_COPY_BC_OFFLINE': os.environ.get('DM_COPY_BC_OFFLINE', 'YES'),
         # what the identity line of a RomFS image names (stage_resources.sh with DM_COPY_ROMFS=NO writes <App>/romfs.id): title ID, display version, package version
         'DM_RESOURCE_TITLE': os.environ.get('GAME', ''),
         'DM_RESOURCE_VERSION': os.environ.get('DM_APP_VERSION', ''),
