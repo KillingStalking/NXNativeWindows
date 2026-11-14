@@ -234,9 +234,11 @@ def convert_entry(entry: dict, base: Path, out_dir: Path, decode) -> dict:
         )
         if rc:
             raise RuntimeError(f"{entry['id']}: NVN deswizzle/transcoder returned {rc}")
-        if dst_pitch.value != dst_pitch_expected  # type: ignore[attr-defined] or dst_size.value != dst_size_expected  # type: ignore[attr-defined]:
+        dst_pitch_value = int(getattr(dst_pitch, "value"))
+        dst_size_value = int(getattr(dst_size, "value"))
+        if dst_pitch_value != dst_pitch_expected or dst_size_value != dst_size_expected:
             raise RuntimeError(f"{entry['id']}: unexpected ASTC layout from native transcoder")
-        converted = dst_buf.raw[:dst_size.value]  # type: ignore[attr-defined]
+        converted = dst_buf.raw[:dst_size_value]
         key = int(decode.texture_key(
             target, nvn_format, flags, samples, width, height, depth, levels,
             stride, pkg_layout, src_buf, len(raw),
@@ -303,7 +305,7 @@ def convert_entry(entry: dict, base: Path, out_dir: Path, decode) -> dict:
         "mip": mip,
         "layer": layer,
         "output": out_name,
-        "row_pitch": int(dst_pitch.value) if "nvn" in entry else int(dst_pitch)  # type: ignore[attr-defined],
+        "row_pitch": dst_pitch_value if "nvn" in entry else int(dst_pitch),
         "size": len(converted),
         "source_sha256": sha256(raw),
         "output_sha256": sha256(converted),
