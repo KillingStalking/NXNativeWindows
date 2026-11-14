@@ -109,6 +109,7 @@ def parse_bntx(buf, base=0, label="<memory>"):
         array_length, = _unpack(buf, "I", brti + 0x30, endian, end, "array length")
         layout_raw, = _unpack(buf, "Q", brti + 0x34, endian, end, "packaged layout")
         image_size, = _unpack(buf, "I", brti + 0x50, endian, end, "image size")
+        channel_mapping = list(bytes(buf[brti + 0x58:brti + 0x5C]))
         dimension = _u8(buf, brti + 0x5C, end, "image dimension")
         name_ptr, = _unpack(buf, "Q", brti + 0x60, endian, end, "texture name pointer")
         mip_table, = _unpack(buf, "Q", brti + 0x70, endian, end, "mipmap pointer table")
@@ -175,7 +176,8 @@ def parse_bntx(buf, base=0, label="<memory>"):
             "array_length": array_length, "layers": layers,
             "mip_offsets": [p - mip_ptrs[0] for p in mip_ptrs],
             "data_offset": data_start, "image_size": image_size,
-            "nvn": nvn, "runtime_only": format_name in RUNTIME_ONLY,
+            "nvn": nvn, "channel_mapping": channel_mapping,
+            "runtime_only": format_name in RUNTIME_ONLY,
             "eligible": (dimension in (0, 1, 3, 4, 5, 8)
                          and tile_mode == 0 and not (flags & 0x06) and samples <= 1),
         })
@@ -322,7 +324,11 @@ def scan(root, out_dir):
                                 skipped_layouts += 1
                                 continue
                             stem = _safe(f"{Path(blob_label).name}_{base:x}_{tex['index']}_{tex['name']}")
-                            common = {"mip_offsets": tex["mip_offsets"], "nvn": tex["nvn"]}
+                            common = {
+                                "mip_offsets": tex["mip_offsets"],
+                                "nvn": tex["nvn"],
+                                "channel_mapping": tex["channel_mapping"],
+                            }
                             if not tex["runtime_only"]:
                                 source_name = f"{stem}.bin"
                                 source_path = source_dir / source_name
