@@ -309,6 +309,14 @@ class App(tk.Tk):
         self.iml_tiles = [Choice(tiles2, 'On', 'More memory for big games (TotK). Needs the capability on in SideStore / SideInstaller.', lambda: self._set_iml(True)),
                           Choice(tiles2, 'Off', 'Plain app, no entitlement. For signers that refuse it.', lambda: self._set_iml(False))]
         self.iml_tiles[0].grid(row=0, column=0, sticky='nsew', padx=(0, 6)); self.iml_tiles[1].grid(row=0, column=1, sticky='nsew', padx=(6, 0))
+        # Offline BC: preconvert supported BC textures to an ASTC sidecar during the build; unmatched formats stay on the runtime decoder
+        tk.Label(self.c3.body, text='Offline BC texture conversion', bg=CARD, fg=TEXT, font=(FONT, 10, 'bold'), anchor='w').pack(fill='x', pady=(16, 0))
+        bc_tiles = tk.Frame(self.c3.body, bg=CARD); bc_tiles.pack(fill='x', pady=(8, 0))
+        bc_tiles.columnconfigure(0, weight=1, uniform='t'); bc_tiles.columnconfigure(1, weight=1, uniform='t')
+        self.offline_bc = bool(self.s.get('offline_bc', False))
+        self.offline_bc_tiles = [Choice(bc_tiles, 'On', 'Scan the extracted RomFS and build an offline ASTC texture pack. Adds build time and data size.', lambda: self._set_offline_bc(True)),
+                                 Choice(bc_tiles, 'Off', 'Use the runtime BC decoder only. No offline texture pack is generated.', lambda: self._set_offline_bc(False))]
+        self.offline_bc_tiles[0].grid(row=0, column=0, sticky='nsew', padx=(0, 6)); self.offline_bc_tiles[1].grid(row=0, column=1, sticky='nsew', padx=(6, 0))
         out = tk.Frame(self.c3.body, bg=CARD); out.pack(fill='x', pady=(12, 0))
         self.out_lbl = tk.Label(out, text='', bg=CARD, fg=MUTED, font=(FONT, 9), anchor='w'); self.out_lbl.pack(side='left')
         self.out_link = Link(out, 'Change', self._pick_out); self.out_link.pack(side='left', padx=8)
@@ -397,6 +405,7 @@ class App(tk.Tk):
             tk.Label(rb, text='No prod.keys selected yet', bg=FIELD, fg=FAINT, font=(FONT, 10), anchor='w').pack(side='left', padx=12)
         for i, tl in enumerate(self.tiles): tl.select(i == int(self.split))
         for i, tl in enumerate(self.iml_tiles): tl.select(i == int(not self.iml))
+        for i, tl in enumerate(self.offline_bc_tiles): tl.select(i == int(not self.offline_bc))
         what = 'The IPA and its data folder are' if self.split else 'The IPA is'
         if self.out: self.out_lbl.configure(text=f'Saves to  {self.out}'); self.out_reset.pack(side='left')
         else: self.out_lbl.configure(text=f'{what} saved next to your game files'); self.out_reset.pack_forget()
@@ -460,6 +469,10 @@ class App(tk.Tk):
         if self.proc: return
         self.iml = v; self.s['iml'] = v; save_settings(self.s); self._refresh()
 
+    def _set_offline_bc(self, v):
+        if self.proc: return
+        self.offline_bc = v; self.s['offline_bc'] = v; save_settings(self.s); self._refresh()
+
     def _wheel(self, e):
         if not self.winfo_exists(): return
         if getattr(e, 'num', None) == 4: step = -3
@@ -500,8 +513,9 @@ class App(tk.Tk):
         cmd = [console_python(), '-u', str(WIN / 'build_ipa_windows.py'), str(folder), '-k', self.keys, '--progress', 'json']
         if self.out: cmd += ['-o', self.out]
         if self.split: cmd += ['--split-data']
+        if self.offline_bc: cmd += ['--offline-bc']
         cmd += ['--entitlements' if self.iml else '--no-entitlements']
-        self.s.update(files=self.files, keys=self.keys); save_settings(self.s)
+        self.s.update(files=self.files, keys=self.keys, offline_bc=self.offline_bc); save_settings(self.s)
         self._clear_log()
         self._write(f'Game folder  {folder}' + ('  (hard links to your files)' if folder != Path(self.files[0]).parent else '') + '\n', 'dim')
         if copied: self._write(f'Copied (another drive, no hard link possible): {", ".join(copied)}\n', 'dim')
