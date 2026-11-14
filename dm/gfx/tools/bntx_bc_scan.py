@@ -22,7 +22,7 @@ MAGIC = b"BNTX\0\0\0\0"
 
 # BNTX (channel << 8 | type) -> NVN format, symbolic format name.
 BNTX_FORMATS = {
-    0x1A01: (0x41, "BC1"), 0x1A06: (0x45, "BC1_SRGB"),
+    0x1A01: (0x42, "BC1"), 0x1A06: (0x46, "BC1_SRGB"),
     0x1B01: (0x43, "BC2"), 0x1B06: (0x47, "BC2_SRGB"),
     0x1C01: (0x44, "BC3"), 0x1C06: (0x48, "BC3_SRGB"),
     0x1D01: (0x49, "BC4"), 0x1D02: (0x4A, "BC4_S"),
@@ -210,7 +210,7 @@ def scan(root, out_dir):
     root_path = fs.Path(root)
     if root_path.is_dir():
         candidate = root_path / "RomFS.img"
-        if candidate.is_file():
+        if fs.is_image(candidate):
             root = str(candidate)
     out_dir = Path(out_dir).resolve()
     source_dir = out_dir / "sources"
