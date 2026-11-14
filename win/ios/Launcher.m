@@ -185,7 +185,7 @@ extern bool dm_setting_live(const char *env, const char *value);
 
 static UIMenuElement *game_menu_setting(DmLauncherModel *m, DmSetting *s) {
     NSString *now = [m value:s]; BOOL fixed = [m locked:s];
-    UIMenuElementAttributes attrs = fixed ? UIMenuElementAttributesDisabled : UIMenuElementAttributesNone;
+    UIMenuElementAttributes attrs = fixed ? UIMenuElementAttributesDisabled : 0;
     __weak DmLauncherModel *weakModel = m;
     if ([s.kind isEqualToString:@"toggle"]) {
         UIAction *a = [UIAction actionWithTitle:s.label image:nil identifier:nil discoverabilityTitle:nil attributes:attrs state:[now isEqualToString:s.onValue] ? UIMenuElementStateOn : UIMenuElementStateOff handler:^(UIAction *action) {
