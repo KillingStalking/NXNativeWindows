@@ -81,7 +81,8 @@ if [ "$sync_aoc" = 1 ] && [ "$via" = afc ]; then
         }
         echo "offline ASTC sidecar on the phone: $id"
     else
-        afc rm -rf /Documents/bc_offline_pack.part /Documents/bc_offline_pack < /dev/null > /dev/null 2>&1 || true
+        afc rm -rf /Documents/bc_offline_pack.part < /dev/null > /dev/null 2>&1 || true
+        afc rm -rf /Documents/bc_offline_pack < /dev/null > /dev/null 2>&1 || true
         echo "no offline ASTC sidecar in this build; removed any stale phone copy"
     fi
 fi
