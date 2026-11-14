@@ -269,7 +269,7 @@ static NSString *offline_bc_size(unsigned long long bytes) {
 - (NSInteger)tableView:(UITableView *)tv numberOfRowsInSection:(NSInteger)sec {
     if (sec < (NSInteger)self.m.sections.count) return (NSInteger)[self.m inSection:self.m.sections[sec]].count;
     if (sec == self.resetSection) return 1;
-    if (sec == self.offlineBCSection) return 3;
+    if (sec == self.offlineBCSection) return 4;
     return 2;
 }
 - (NSString *)tableView:(UITableView *)tv titleForHeaderInSection:(NSInteger)sec {
@@ -299,11 +299,12 @@ static NSString *offline_bc_size(unsigned long long bytes) {
     }
     if (ip.section == self.offlineBCSection) {
         NSDictionary *bc = offline_bc_summary();
-        NSArray<NSString *> *labels = @[@"Pack status", @"Converted subresources", @"Kept on runtime decoder"];
+        NSArray<NSString *> *labels = @[@"Pack status", @"Converted subresources", @"Kept on runtime decoder", @"Sidecar size"];
         BOOL ready = [bc[@"ready"] boolValue];
         NSString *value = ip.row == 0 ? (ready ? @"● Ready" : @"Not installed")
             : ip.row == 1 ? [NSString stringWithFormat:@"%lu", (unsigned long)[bc[@"converted"] unsignedIntegerValue]]
-            : [NSString stringWithFormat:@"%lu", (unsigned long)[bc[@"skipped"] unsignedIntegerValue]];
+            : ip.row == 2 ? [NSString stringWithFormat:@"%lu", (unsigned long)[bc[@"skipped"] unsignedIntegerValue]]
+            : (ready ? offline_bc_size([bc[@"bytes"] unsignedLongLongValue]) : @"—");
         UILabel *l = body_label(labels[ip.row]);
         UILabel *st = value_label(value);
         if (ip.row == 0) st.textColor = ready ? UIColor.systemGreenColor : UIColor.secondaryLabelColor;
