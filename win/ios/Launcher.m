@@ -188,25 +188,30 @@ static UIMenuElement *game_menu_setting(DmLauncherModel *m, DmSetting *s) {
     UIMenuElementAttributes attrs = fixed ? UIMenuElementAttributesDisabled : 0;
     __weak DmLauncherModel *weakModel = m;
     if ([s.kind isEqualToString:@"toggle"]) {
-        UIAction *a = [UIAction actionWithTitle:s.label image:nil identifier:nil discoverabilityTitle:nil attributes:attrs state:[now isEqualToString:s.onValue] ? UIMenuElementStateOn : UIMenuElementStateOff handler:^(UIAction *action) {
+        UIAction *a = [UIAction actionWithTitle:s.label image:nil identifier:nil handler:^(UIAction *action) {
             DmLauncherModel *model = weakModel; if (!model) return;
             NSString *next = [now isEqualToString:s.onValue] ? s.offValue : s.onValue;
             [model choose:s value:next]; (void)dm_setting_live(s.env.UTF8String, next.UTF8String);
         }];
+        a.attributes = attrs;
+        a.state = [now isEqualToString:s.onValue] ? UIMenuElementStateOn : UIMenuElementStateOff;
         if (fixed) a.subtitle = @"Set in env.txt";
         return a;
     }
     NSMutableArray<UIMenuElement *> *choices = [NSMutableArray array];
     for (NSArray<NSString *> *option in s.options ?: @[]) {
         NSString *v = option[0], *label = option[1];
-        UIAction *a = [UIAction actionWithTitle:label image:nil identifier:nil discoverabilityTitle:nil attributes:attrs state:[v isEqualToString:now] ? UIMenuElementStateOn : UIMenuElementStateOff handler:^(UIAction *action) {
+        UIAction *a = [UIAction actionWithTitle:label image:nil identifier:nil handler:^(UIAction *action) {
             DmLauncherModel *model = weakModel; if (!model) return;
             [model choose:s value:v]; (void)dm_setting_live(s.env.UTF8String, v.UTF8String);
         }];
+        a.attributes = attrs;
+        a.state = [v isEqualToString:now] ? UIMenuElementStateOn : UIMenuElementStateOff;
         [choices addObject:a];
     }
     NSString *current = [m choiceLabel:s];
-    return [UIMenu menuWithTitle:s.label subtitle:fixed ? [current stringByAppendingString:@", set in env.txt"] : nil image:nil identifier:nil options:UIMenuOptionsSingleSelection children:choices];
+    NSString *title = [NSString stringWithFormat:@"%@ — %@%@", s.label, current, fixed ? @", set in env.txt" : @""];
+    return [UIMenu menuWithTitle:title image:nil identifier:nil options:UIMenuOptionsSingleSelection children:choices];
 }
 
 void *dm_game_menu(void) {
