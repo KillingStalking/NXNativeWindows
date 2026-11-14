@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "textures": [
+    {
+      "id": "example_bc3_mip0_layer0",
+      "format": "BC3",
+      "width": 256,
+      "height": 256,
+      "source": "linear/example_bc3.bin",
+      "mip": 0,
+      "layer": 0
+    }
+  ]
+}
