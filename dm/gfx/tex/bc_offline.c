@@ -16,6 +16,7 @@
 #endif
 
 extern void bc_soft_astc_pixels(const uint8_t *rgba16, uint8_t *out);
+extern int nvn_bc_soft;
 
 static int selected_format(uint32_t pf) {
     switch (pf) {
@@ -73,7 +74,7 @@ BC_EXPORT int bc_offline_texture_level(
         !width || !height || !levels || level >= levels) return -10;
     if (target == 2 || target == 5 || target == 6 || target == 10 || (flags & 0x50) || samples > 1)
         return -11;
-    uint32_t pf = nvn_fmt_bc_soft(nvn_format);
+    nvn_bc_soft = 1;  // Enable the same no-native-BC format lookup used by the iOS upload path.\n    uint32_t pf = nvn_fmt_bc_soft(nvn_format);
     if (!selected_format(pf)) return -12;
 
     nvn_texdesc d = {target, nvn_format, flags, samples, width, height, depth, levels, stride, pkg_layout};
