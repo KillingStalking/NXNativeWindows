@@ -121,7 +121,21 @@ def read_at(fd, size, offset):
                 chunks.append(chunk); done += len(chunk)
     data = b''.join(chunks)
     if len(data) != size:
-        raise OSError(f'short shader package read at {offset:#x}: requested {size} bytes, got {len(data)}')
+        # Windows' CRT read path can unexpectedly report EOF on a still-valid
+        # package descriptor. Retry the exact range through a read-only mapped
+        # view; map only the aligned range, not the whole (possibly multi-GB) file.
+        first_error = f'short shader package read at {offset:#x}: requested {size} bytes, got {len(data)}'
+        try:
+            granularity = mmap.ALLOCATIONGRANULARITY
+            map_offset = offset - (offset % granularity)
+            map_length = offset - map_offset + size
+            with mmap.mmap(fd, map_length, access=mmap.ACCESS_READ, offset=map_offset) as view:
+                mapped = view[offset - map_offset:offset - map_offset + size]
+            if len(mapped) == size:
+                return mapped
+            raise OSError(f'mapped read returned {len(mapped)} bytes')
+        except (OSError, ValueError) as map_error:
+            raise OSError(f'{first_error}; mapped retry failed: {map_error}') from map_error
     return data
 
 def clone(src, dst):   # APFS copy-on-write, else a plain copy; the clonefile call, not a cp: a fork of this large process costs about 6 ms
