@@ -6,8 +6,6 @@
 #import <QuartzCore/CAMetalLayer.h>
 #import <Metal/Metal.h>
 #import <AVFAudio/AVFAudio.h>
-int dm_mem_guard(void);   // nvn_mtl.m: the memory guard level, shown in the HUD
-void mtl_mem_pressure_request(int tier, int reason);   // nvn_mtl.m: request cache trimming after an iOS memory warning
 #include <errno.h>
 #include "front.h"
 #include "hle.h"
@@ -74,7 +72,6 @@ static void launcher_done(void) { [g_root startGame]; }
 - (void)startGame {
     if (self.game) return;
     front_hud_env();   // apply launcher / env-file switches before starting the game
-    dm_mem_guard();     // start the iOS memory watchdog immediately, not only on the first display-link FPS query
     self.game = [[DmGameView alloc] initWithFrame:self.view.bounds];
     [self.view addSubview:self.game];
     g_layer = (CAMetalLayer *)self.game.layer;
@@ -156,8 +153,9 @@ static void front_ios_power_watch(void) {
     [NSNotificationCenter.defaultCenter addObserverForName:NSProcessInfoPowerStateDidChangeNotification object:nil queue:nil usingBlock:^(NSNotification *n) {
         (void)n; LOG("front end: Low Power Mode → %s (%.0f s after launch)", dm_low_power_now() ? "on" : "off", (now_ns() - g_t0_ns) / 1e9); }];
     [NSNotificationCenter.defaultCenter addObserverForName:UIApplicationDidReceiveMemoryWarningNotification object:nil queue:nil usingBlock:^(NSNotification *n) {
-        (void)n; LOG("front end: memory warning (%.0f s after launch)", (now_ns() - g_t0_ns) / 1e9); mtl_mem_pressure_request(1, 3);
-    }];   // cache trimming runs at the next submission, before new GPU work is encoded    LOG("front end: thermal state %d, brightness %.2f, Low Power Mode %s", dm_thermal_now(), g_brightness, dm_low_power_now() ? "on" : "off");
+        (void)n; LOG("front end: memory warning (%.0f s after launch)", (now_ns() - g_t0_ns) / 1e9);
+    }];
+    LOG("front end: thermal state %d, brightness %.2f, Low Power Mode %s", dm_thermal_now(), g_brightness, dm_low_power_now() ? "on" : "off");
 }
 
 // Frame-rate counter: the frames put on screen in the last second (nvn_mtl.m counts them for NVN and for the Vulkan layer alike; frames the display link merged away are not counted).
@@ -186,8 +184,7 @@ static UILabel *front_ios_fps_label(void) {
                 task_vm_info_data_t vi; mach_msg_type_number_t c = TASK_VM_INFO_COUNT; double used = 0;
                 if (task_info(mach_task_self(), TASK_VM_INFO, (task_info_t)&vi, &c) == KERN_SUCCESS) used = vi.phys_footprint / 1073741824.0;
                 double left = os_proc_available_memory() / 1073741824.0, gpu = n > 8 ? mtl_gpu_ms(n - 4) : -1;
-                int mg = dm_mem_guard();
-                l.text = [NSString stringWithFormat:@" %.0f fps · GPU %@ · %.2f GB · %.2f GB left%@ ", fps, gpu >= 0 ? [NSString stringWithFormat:@"%.1f ms", gpu] : @"--", used, left, mg == 2 ? @" · GUARD 30+flush" : mg == 1 ? @" · GUARD 30" : @""];
+                l.text = [NSString stringWithFormat:@" %.0f fps · GPU %@ · %.2f GB · %.2f GB left ", fps, gpu >= 0 ? [NSString stringWithFormat:@"%.1f ms", gpu] : @"--", used, left];
                 l.textColor = left < 0.25 ? UIColor.systemRedColor : left < 0.5 ? UIColor.systemOrangeColor : UIColor.whiteColor;   // red: iOS is about to close the app
             }
         }
