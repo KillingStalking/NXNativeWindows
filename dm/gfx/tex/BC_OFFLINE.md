@@ -12,6 +12,16 @@ This branch contains an offline BC texture conversion prototype. It reuses the r
 
 The original game files are read-only. The scanner extracts each eligible BNTX texture allocation into a separate source file; the packer writes raw ASTC block streams and a JSON index.
 
+## One-command scan and pack
+
+From the repository root on Windows:
+
+```powershell
+python dm/gfx/tools/bc_offline_build.py --root "D:\\games\\title\\RomFS.img" --out "D:\\games\\title\\offline-bc" --clang "C:\\toolchains\\llvm\\bin\\clang.exe"
+```
+
+This runs the scanner and packer in sequence. It creates `offline-bc/scan/` for extracted source allocations and reports, and `offline-bc/bc_offline_pack/` for the two runtime sidecar files. Set `DM_BC_OFFLINE_PACK` to that final `bc_offline_pack` directory when building the app.
+
 ## Automatic BNTX scan
 
 The scanner walks an extracted RomFS directory or the repository's read-only `RomFS.img` view. It looks for BNTX containers embedded in files and also scans Yaz0-compressed payloads, including compressed SARC members. It does not currently decompress every possible game archive/compression format.
