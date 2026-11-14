@@ -36,7 +36,7 @@ def py(*args, env=None, capture=True):
 
 # ---- dm/host/Makefile, reproduced ----
 def host_sources(game_h_dir):
-    """(sources, include dirs) exactly as `make -n -B dmhost` lists them: SRC, GFX and the libvpx objects' sources; the include order of the host's link line, then libvpx's"""
+    """Reproduce the host's source and include inputs, including the separately built libvpx and dav1d sources."""
     mk = (HOST / 'Makefile').read_text(encoding='utf-8')
     want_src = 'SRC=main.c loader.c hle.c crash.c probe.c thread.c save_sync.c memstat.m haptics_apple.m pad_switch2_apple.m $(sort $(wildcard hle_*.c)) front_mac.m web_apple.m entry.S'
     want_gfx = 'GFX=$(sort $(wildcard ../gfx/*.c ../gfx/nvn/*.c ../gfx/nvn/*.m ../gfx/nvn/*.S ../gfx/tex/*.c ../gfx/tex/*.m ../gfx/vk/*.m ../gfx/gl/*.m))'
