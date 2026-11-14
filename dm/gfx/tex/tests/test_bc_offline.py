@@ -15,7 +15,7 @@ pack = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(pack)
 
 
-@unittest.skipUnless(os.name == "nt" and shutil.which("clang"), "requires Windows clang/lld")
+@unittest.skipUnless(shutil.which("clang"), "requires clang")
 class OfflineBC(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
