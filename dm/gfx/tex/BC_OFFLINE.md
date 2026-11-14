@@ -27,7 +27,7 @@ This runs the scanner and packer in sequence. It creates `offline-bc/scan/` for 
 The Windows NSP driver can run the scan and conversion automatically, before it packages the IPA:
 
 ```powershell
-python win/build_ipa_windows.py "D:\\games\\title.nsp" -k "D:\\keys\\prod.keys" --offline-bc --split-data
+python win/build_ipa_windows.py "D:\\games\\title" -k "D:\\keys\\prod.keys" --offline-bc --split-data
 ```
 
 `--offline-bc` uses the RomFS selected by the normal NSP extraction pipeline, writes intermediate scan files and the sidecar under `<game-work>\\build\\bc_offline\\`, then includes `bc_offline_pack/` automatically. With `--split-data`, the pack is placed alongside the game files in the split-data folder; without it, the pack is bundled in the IPA. Set `DM_BC_OFFLINE_OUT` to override the intermediate output directory, or `DM_BC_OFFLINE_PACK` to provide an already-built pack and skip automatic conversion.
