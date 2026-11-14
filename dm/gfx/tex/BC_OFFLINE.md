@@ -45,7 +45,7 @@ An NVN entry describes the complete texture storage in the source file. The conv
 }
 ```
 
-NVN format codes recognized by the tool: 0x41/0x42 BC1, 0x43 BC2, 0x44 BC3, 0x45–0x48 their sRGB variants, 0x4F BC7, and 0x50 BC7 sRGB. The texture descriptor's format is authoritative; an optional top-level format label must agree with it.
+NVN format codes recognized by the tool: 0x41/0x42 BC1, 0x43 BC2, 0x44 BC3, 0x45–0x48 their sRGB variants, 0x4D BC7, and 0x4E BC7 sRGB. BC6H uses 0x4F/0x50 and is intentionally not converted. The texture descriptor's format is authoritative; an optional top-level format label must agree with it.
 
 ## Linear input manifest (for tests / already-deswizzled dumps)
 
