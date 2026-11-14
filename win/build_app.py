@@ -382,7 +382,10 @@ def main():
         sp = env.get('NXW_SPLIT_DATA', '')
         if sp and sp != '0':   # a split build: the app's "game data needed" screen (win/ios/DataHelp.m) names the data folder and its size
             dname = Path(sp).name if sp not in ('1', 'YES') else out_ipa.stem + '-data'
-            dsize = sum(n for d in (romfs, msl_ios / msldir, aoc if aoc and aoc.is_dir() else None, bc_offline) if d for _, _, n in list_files(d))   # listed once, reused by split_data
+            data_dirs = [romfs, msl_ios / msldir]
+            if aoc is not None and aoc.is_dir(): data_dirs.append(aoc)
+            if bc_offline is not None: data_dirs.append(bc_offline)
+            dsize = sum(n for d in data_dirs for _, _, n in list_files(d))   # listed once, reused by split_data
             pl['NXWDataFolder'] = dname; pl['NXWDataSize'] = f'{dsize / 2**30:.1f} GB' if dsize >= 2**30 else f'{dsize / 2**20:.0f} MB'
         plistlib.dump(pl, f, fmt=plistlib.FMT_BINARY)
     (app / 'PkgInfo').write_bytes(b'APPL????')
@@ -402,15 +405,14 @@ def main():
         data = Path(split) if split not in ('1', 'YES') else out_ipa.with_name(out_ipa.stem + '-data')
         split_stamp = f'game\t{game}\nbundle_id\t{bundle_id}\nversion\t{version}\nchain\t{v}\ngfx\t{gfx}\n'
         if bc_offline:
-            import hashlib
             digest = hashlib.sha256()
             with (bc_offline / 'bc_offline_pack.bin').open('rb') as pack_file:
                 for chunk in iter(lambda: pack_file.read(1024 * 1024), b''): digest.update(chunk)
             split_stamp += f'bc_offline_sha256\t{digest.hexdigest()}\n'
-        split_data(data, {'romfs': romfs, f'msl/{msldir}': msl_ios / msldir,
-                          **({'aoc': aoc} if has_aoc else {}),
-                          **({'bc_offline_pack': bc_offline} if bc_offline else {})},
-                   split_stamp, name, skip_suffix=('_bp.metallib',) if skip_bp else ())
+        split_parts = {'romfs': romfs, f'msl/{msldir}': msl_ios / msldir}
+        if has_aoc: split_parts['aoc'] = aoc
+        if bc_offline is not None: split_parts['bc_offline_pack'] = bc_offline
+        split_data(data, split_parts, split_stamp, name, skip_suffix=('_bp.metallib',) if skip_bp else ())
     else:
         maps.append(f'Payload/DmIOS.app/msl/{msldir}={msl_ios / msldir}')
         if has_aoc: maps.append(f'Payload/DmIOS.app/aoc={aoc}')
