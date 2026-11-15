@@ -58,7 +58,7 @@ def build_decoder(clang: str, temp: Path) -> Path:
         # The freestanding Windows target has no Windows SDK/CRT headers.
         # Provide declarations for the memory routines implemented below.
         include_dir = temp / "include"
-        include_dir.mkdir()
+        include_dir.mkdir(parents=True, exist_ok=True)
         (include_dir / "string.h").write_text(
             "#pragma once\n"
             "#include <stddef.h>\n"
