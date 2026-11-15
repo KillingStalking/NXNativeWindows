@@ -21,6 +21,7 @@ IOS = DM / 'ios'
 HOST = DM / 'host'
 sys.path.insert(0, str(DM / 'tools'))
 import romfs as rfs   # the RomFS as a folder or as one DMROMFS1 image (nx_extract --romfs-image), read alike
+import shader_lib   # NVN shader libraries may be a folder or a packed .img
 
 
 def t(msg): print(f'[{time.strftime("%H:%M:%S")}] {msg}', flush=True)
@@ -302,7 +303,7 @@ def main():
         romfs = mods.overlay_romfs(romfs, env['NXW_MODS_ROMFS'].split(os.pathsep), w / 'build/romfs_mods', log=t)
     hdr = (DM / 'gfx/nvn/dmsh_chain.h').read_text(encoding='utf-8')
     v = (re.search(r'^#define DMSH_CHAIN "(.*)"', hdr, re.M) or die('no DMSH_CHAIN in dmsh_chain.h')).group(1)
-    gfx = env.get('GFXAPI') or ('nvn' if list((msl_ios / f'b-{v}').glob('*_b.metallib')) else 'vulkan' if (msl_ios / 'vk/vk_shaders.metallib').exists()
+    gfx = env.get('GFXAPI') or ('nvn' if shader_lib.has_library(msl_ios / f'b-{v}') else 'vulkan' if (msl_ios / 'vk/vk_shaders.metallib').exists()
                                 else 'gl' if (msl_ios / 'gl/gl_shaders.metallib').exists() else 'nvn')
     capture = env.get('NXW_CAPTURE_IPA') == '1'   # a capture IPA: no shader libraries (the game runs only to compile its run-time shaders, which its env.txt has the host save)
     if capture:
@@ -316,11 +317,11 @@ def main():
         msldir = 'gl'
     else:
         msldir = f'b-{v}'
-        if not list((msl_ios / msldir).glob('*_b.metallib')): die(f'no iOS shader libraries {msl_ios}/{msldir}')
+        lib = msl_ios / msldir
+        if not shader_lib.has_library(lib): die(f'no iOS shader libraries {msl_ios}/{msldir}')
         inputs = py(DM / 'gfx/tools/dmsh_chain.py', '--inputs', env=dict(env, DM_GAME=game))
-        stamp = (msl_ios / msldir / 'inputs.tsv')
-        lines = stamp.read_text(encoding='utf-8').splitlines() if stamp.exists() else []
-        if f'game\t{game}' not in lines or f'inputs\t{inputs}' not in lines: die(f'the iOS shader libraries {msl_ios}/{msldir} are not a full build from this profile\'s current tables (inputs {inputs})')
+        stamp = shader_lib.read_stamp(lib)
+        if stamp.get('game') != game or stamp.get('inputs') != inputs: die(f'the iOS shader libraries {msl_ios}/{msldir} are not a full build from this profile\'s current tables (inputs {inputs})')
         c1 = gd / 'c1_full.tsv'
         if not (c1.exists() and c1.read_text(encoding='utf-8').splitlines()[:1] and c1.read_text(encoding='utf-8').splitlines()[0].startswith(f'# chain b-{v} inputs {inputs} ')):
             die(f'{c1} is missing or not made from these libraries (chain {v}, inputs {inputs})')
