@@ -7,6 +7,7 @@ are represented as runtime-only entries. Unknown layouts are skipped, never gues
 from __future__ import annotations
 
 import argparse
+import hashlib
 import importlib.util
 import json
 import mmap
@@ -325,7 +326,17 @@ def scan(root, out_dir):
                             if not tex["eligible"]:
                                 skipped_layouts += 1
                                 continue
-                            stem = _safe(f"{Path(blob_label).name}_{base:x}_{tex['index']}_{tex['name']}")
+                            # Basenames are not globally unique in RomFS: different directories
+                            # can contain same-named archives with identical BNTX offsets and
+                            # texture indices. Include a digest of the full container label so
+                            # every subresource gets a stable, collision-resistant identity.
+                            label_digest = hashlib.sha256(
+                                os.fsencode(blob_label)
+                            ).hexdigest()[:12]
+                            stem = _safe(
+                                f"{Path(blob_label).name}_{label_digest}_{base:x}_"
+                                f"{tex['index']}_{tex['name']}"
+                            )
                             common = {
                                 "mip_offsets": tex["mip_offsets"],
                                 "nvn": tex["nvn"],
