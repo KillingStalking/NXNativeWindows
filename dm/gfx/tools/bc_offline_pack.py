@@ -55,6 +55,17 @@ def safe_name(value: str) -> str:
 
 def build_decoder(clang: str, temp: Path) -> Path:
     if os.name == "nt":
+        # The freestanding Windows target has no Windows SDK/CRT headers.
+        # Provide declarations for the memory routines implemented below.
+        include_dir = temp / "include"
+        include_dir.mkdir()
+        (include_dir / "string.h").write_text(
+            "#pragma once\n"
+            "#include <stddef.h>\n"
+            "void *memcpy(void *dst, const void *src, size_t count);\n"
+            "void *memset(void *dst, int value, size_t count);\n",
+            encoding="ascii",
+        )
         crt = temp / "bc_offline_crt.c"
         crt.write_text(
             "#include <stddef.h>\n"
@@ -71,7 +82,7 @@ def build_decoder(clang: str, temp: Path) -> Path:
             "-Wl,/EXPORT:bc_offline_texture",
             "-Wl,/EXPORT:bc_offline_texture_level",
             "-Wl,/EXPORT:bc_offline_level_offset", "-Wl,/EXPORT:bc_offline_texture_key",
-            f"-I{TEX}", f"-I{ROOT / 'dm' / 'gfx' / 'nvn'}", "-o", str(dll),
+            f"-I{include_dir}", f"-I{TEX}", f"-I{ROOT / 'dm' / 'gfx' / 'nvn'}", "-o", str(dll),
             str(TEX / "bc_soft.c"), str(TEX / "nvn_bc2astc.c"),
             str(TEX / "nvn_deswizzle.c"), str(TEX / "nvn_fmt_mtl.c"),
             str(ROOT / "dm" / "gfx" / "nvn" / "nvn_tex.c"),
