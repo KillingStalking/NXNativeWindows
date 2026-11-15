@@ -318,7 +318,15 @@ def main():
     else:
         msldir = f'b-{v}'
         lib = msl_ios / msldir
-        if not shader_lib.has_library(lib): die(f'no iOS shader libraries {msl_ios}/{msldir}')
+        # Log the exact view used by the child build process before the library check. This
+        # distinguishes a path/import/ROMFS-view mismatch from a genuinely missing library.
+        lib_view = shader_lib.view(lib)
+        base_count = sum(1 for _ in lib_view.glob('*_b.metallib')) if shader_lib.exists(lib) else 0
+        t(f"shader diagnostic: module={shader_lib.__file__}; MSL_IOS={msl_ios}; chain={v}; "
+          f"lib={lib}; image={shader_lib.image_of(lib)}; folder_exists={Path(shader_lib.folder_of(lib)).is_dir()}; "
+          f"image_exists={Path(shader_lib.image_of(lib)).is_file()}; view={lib_view}; base_count={base_count}; "
+          f"has_library={shader_lib.has_library(lib)}; stamp={shader_lib.read_stamp(lib)}")
+        if base_count == 0: die(f'no iOS shader libraries {msl_ios}/{msldir}')
         inputs = py(DM / 'gfx/tools/dmsh_chain.py', '--inputs', env=dict(env, DM_GAME=game))
         stamp = shader_lib.read_stamp(lib)
         if stamp.get('game') != game or stamp.get('inputs') != inputs: die(f'the iOS shader libraries {msl_ios}/{msldir} are not a full build from this profile\'s current tables (inputs {inputs})')
