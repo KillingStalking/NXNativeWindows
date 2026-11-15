@@ -74,10 +74,12 @@ def mac_compile(msl, air, lib):   # same interface as ios_metal.compile; the pre
     dmsh_pch.compile(MAC_RUN + METAL_DEPTH, msl, air)
     subprocess.run([*MAC_LINK, air, '-o', lib], check=True)
 
+_fd_paths = {}   # original package descriptor -> path; workers reopen their own descriptor after fork
+
 def record_index(path):   # → (an open descriptor, {a record's key: its bytes' (start, end)}): shader_split.py writes each record's key at +0x08, its bytes from its marker to the next one
     # Scanned through a read-only mapping that is closed again, so no package stays in this process. Pokopia's ps_rdb.bin (4.25 GB) read and cut into its 105,118
     # records left the process at 8.7 GB, and each fork (every spirv-cross and Metal compile) then took 75 ms instead of 3 with the GIL held: one shader worker at a time (GitHub issue #1036)
-    fd = os.open(path, os.O_RDONLY); n = os.fstat(fd).st_size
+    fd = os.open(path, os.O_RDONLY | getattr(os, 'O_BINARY', 0)); _fd_paths[fd] = path; n = os.fstat(fd).st_size
     if not n: return fd, {}
     with mmap.mmap(fd, n, access=mmap.ACCESS_READ) as m:
         # Do not search for the next marker in arbitrary shader bytes: BTCDBTCD
@@ -104,6 +106,8 @@ def record_index(path):   # → (an open descriptor, {a record's key: its bytes'
 # Both APIs may return a short read, so keep reading until the requested span
 # is complete; shader records must never be silently truncated.
 _pread_lock = threading.Lock()
+_read_fds = {}   # (process id, package path) -> process-private descriptor; forked workers must not share file offsets
+
 def read_at(fd, size, offset):
     chunks = []
     done = 0
@@ -113,29 +117,24 @@ def read_at(fd, size, offset):
             if not chunk: break
             chunks.append(chunk); done += len(chunk)
     else:
+        # A descriptor inherited through fork shares its underlying file position
+        # with the parent. A Python lock is process-local, so it cannot serialize
+        # seek+read across workers. Reopen once per process and package instead.
         with _pread_lock:
-            os.lseek(fd, offset, os.SEEK_SET)
+            path = _fd_paths[fd]
+            key = (os.getpid(), path)
+            read_fd = _read_fds.get(key)
+            if read_fd is None:
+                read_fd = os.open(path, os.O_RDONLY | getattr(os, 'O_BINARY', 0))
+                _read_fds[key] = read_fd
+            os.lseek(read_fd, offset, os.SEEK_SET)
             while done < size:
-                chunk = os.read(fd, size - done)
+                chunk = os.read(read_fd, size - done)
                 if not chunk: break
                 chunks.append(chunk); done += len(chunk)
     data = b''.join(chunks)
     if len(data) != size:
-        # Windows' CRT read path can unexpectedly report EOF on a still-valid
-        # package descriptor. Retry the exact range through a read-only mapped
-        # view; map only the aligned range, not the whole (possibly multi-GB) file.
-        first_error = f'short shader package read at {offset:#x}: requested {size} bytes, got {len(data)}'
-        try:
-            granularity = mmap.ALLOCATIONGRANULARITY
-            map_offset = offset - (offset % granularity)
-            map_length = offset - map_offset + size
-            with mmap.mmap(fd, map_length, access=mmap.ACCESS_READ, offset=map_offset) as view:
-                mapped = view[offset - map_offset:offset - map_offset + size]
-            if len(mapped) == size:
-                return mapped
-            raise OSError(f'mapped read returned {len(mapped)} bytes')
-        except (OSError, ValueError) as map_error:
-            raise OSError(f'{first_error}; mapped retry failed: {map_error}') from map_error
+        raise OSError(f'short shader package read at {offset:#x}: requested {size} bytes, got {len(data)}')
     return data
 
 def clone(src, dst):   # APFS copy-on-write, else a plain copy; the clonefile call, not a cp: a fork of this large process costs about 6 ms
@@ -992,22 +991,7 @@ def rec_of(key):
         sys.exit(f'[RED] {name} holds no record of shader {key}, which the shader map names: the package and the map come from different shader_split.py runs{old}; '
                  f'split the shaders again (the NSP script does when {dm_dir} is removed)')
     o, e = recs[key]
-    try:
-        return name, read_at(fd, e - o, o)
-    except OSError as exc:
-        # Include enough context to distinguish a package that changed after
-        # record_index() from a short read against an unchanged file handle.
-        fd_stat = os.fstat(fd)
-        try:
-            path_stat = os.stat(os.path.join(dm_dir, name))
-            path_info = f", path_size={path_stat.st_size:#x}, path_mtime_ns={path_stat.st_mtime_ns}"
-        except OSError as stat_exc:
-            path_info = f", path_stat_error={stat_exc}"
-        raise OSError(
-            f"{exc}; package={os.path.join(dm_dir, name)}, shader={key}, "
-            f"record=[{o:#x},{e:#x}), fd_size={fd_stat.st_size:#x}, "
-            f"fd_mtime_ns={fd_stat.st_mtime_ns}{path_info}"
-        ) from exc
+    return name, read_at(fd, e - o, o)
 for key in keys: digests[key] = shader_key(key, *rec_of(key))
 def plain_digest(k):   # a paired pixel shader's key, also when it is not built this time
     if k in digests: return digests[k]
