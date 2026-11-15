@@ -381,10 +381,22 @@ def main() -> int:
     else:
         if not args.clang:
             raise RuntimeError("clang was not found; pass --clang or set CLANG")
-        with tempfile.TemporaryDirectory(prefix="dm-bc-offline-") as td:
-            decoder_path = build_decoder(args.clang, Path(td))
+        # Keep the DLL outside %TEMP%. Windows security products and application
+        # control policies may deny loading freshly generated DLLs from temp
+        # directories (WinError 5). Keeping it beside the pack also avoids trying
+        # to delete a still-loaded DLL when TemporaryDirectory exits.
+        decoder_dir = out_dir / ".decoder"
+        decoder_dir.mkdir(parents=True, exist_ok=True)
+        decoder_path = build_decoder(args.clang, decoder_dir)
+        try:
             decode = load_decoder(decoder_path)
-            results = [convert_entry(e, manifest_path.parent, out_dir, decode) for e in manifest["textures"]]
+        except OSError as exc:
+            raise RuntimeError(
+                f"could not load offline BC decoder {decoder_path}: {exc}. "
+                "If Windows Security or antivirus blocked the DLL, allow this "
+                "build output folder and retry."
+            ) from exc
+        results = [convert_entry(e, manifest_path.parent, out_dir, decode) for e in manifest["textures"]]
     pack_path = bundle_results(results, out_dir)
     index = {
         "version": 1,
