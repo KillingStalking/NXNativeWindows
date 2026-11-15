@@ -29,3 +29,6 @@ int bc_soft_decode_for_texture(uint32_t mtl_pf, int is_3d, const uint8_t *src, s
 int bc_soft_block(uint32_t mtl_pf, const uint8_t *block, uint8_t *out, size_t out_pitch);
 // One 4 × 4 block as the upload writes it (an ASTC 4x4 block, RG11B10F pixels, or bc_soft_block's pixels), for tests
 int bc_soft_out_block(uint32_t mtl_pf, const uint8_t *block, uint8_t *out, size_t out_pitch);
+
+// Encode 16 RGBA8 texels into one ASTC 4x4 block (used by the offline BC7 converter).
+void bc_soft_astc_pixels(const uint8_t *rgba16, uint8_t *out);
